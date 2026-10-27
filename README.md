@@ -1,0 +1,70 @@
+# CloudOps Monitor
+
+A deployment and application-health monitoring platform for a developer or small team. It brings
+together health checks, deployment history, structured logs and operational events in one place,
+so that when something breaks you can see **what is broken, since when, what changed and what the
+evidence says**.
+
+> **Project status: Phase 1 (architecture and planning).** No application code exists yet. This
+> README describes the planned system. Features are listed as they are implemented and verified.
+> Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
+
+This is the third project in a portfolio, after
+[OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
+[DocuMind](https://github.com/moeletsimelamu/documind) (document knowledge assistant, FastAPI +
+Angular). It focuses on operations: monitoring, diagnosis and delivery.
+
+## The problem
+
+A developer ships a new version. Minutes later the application starts returning errors. To find out
+why, they normally jump between a CI dashboard, server logs, a status page and guesswork.
+CloudOps Monitor puts the signals side by side on one time axis:
+
+- the health check went from **healthy to degraded at 14:07**,
+- the **deploy of `a1b2c3d` finished at 14:03**,
+- the application's request logs show **5xx errors starting at 14:04**.
+
+## Planned features (first release)
+
+- **Application registry** with validated health-check URLs and an SSRF-safe target allowlist.
+- **Health monitoring**: scheduled HTTP checks with timeouts, a documented classification of
+  responses and network failures, a healthy / degraded / unavailable state machine with hysteresis,
+  and staleness detection, so an old success never looks current.
+- **Health history**: response times, failed checks, state transitions, and availability with
+  coverage shown alongside.
+- **Incidents and events** recorded on state transitions only, with no repeated alerts for a
+  failure that persists.
+- **Deployment history** read from real GitHub Actions workflow runs.
+- **Structured log ingestion and a log explorer** with per-application keys, redaction and filters.
+- **A troubleshooting workspace** per application that combines all of the above on one evidence
+  timeline.
+- **System status**: liveness, readiness, worker heartbeat and non-secret configuration.
+- **A sandbox service**: a controllable local target you can switch between healthy, erroring, slow
+  and down. It is used for the demo and the automated end-to-end tests.
+
+## Architecture in brief
+
+A modular monolith: one FastAPI process serves the API and the built Angular app, and runs the
+monitoring worker as an asyncio task. SQLite stores everything. Applications push logs to an
+ingest endpoint. Deployment records are pulled from the GitHub REST API. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| Area | Technology |
+|---|---|
+| API and worker | Python 3.14, FastAPI, Pydantic, SQLAlchemy 2.1, Alembic, httpx2 |
+| Database | SQLite (WAL) |
+| Frontend | Angular 21, TypeScript, hand-written SVG charts, IBM Plex fonts |
+| Tests | pytest, Vitest, Playwright + axe |
+| Delivery | Docker, Docker Compose, GitHub Actions, GitHub Container Registry |
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/PLAN.md](docs/PLAN.md) | Scope, folder structure, dependency versions, testing plan, deployment options and costs, decision log |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, health-check classification and state machine, events, logs, deployments, data model |
+| [docs/DESIGN.md](docs/DESIGN.md) | Interface principles, visual identity, screens, accessibility, responsive behaviour |
+| [docs/SECURITY.md](docs/SECURITY.md) | Threat model, SSRF controls, authentication, secrets, logging hygiene |
+
+Setup, Docker, testing, CI/CD and deployment instructions will be added as each part is built and
+verified.
