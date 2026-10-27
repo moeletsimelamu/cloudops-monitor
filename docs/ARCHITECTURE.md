@@ -1,8 +1,9 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phase 1 design. Nothing in this document is implemented yet. Sections are updated as
-> each phase lands, and anything that differs from this design is recorded in the decision log in
-> [PLAN.md](PLAN.md).
+> **Status:** Phase 2 complete: configuration, structured logging, the error envelope, the full
+> database schema (Alembic baseline), liveness and readiness, and operator authentication are
+> implemented and tested (§7, §8). Monitoring, events, logs and deployments (§3–§6) are still
+> design. Differences from the design are recorded in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
 
@@ -310,9 +311,10 @@ wording reports timing only and makes no claim about cause.
 | Endpoint | Meaning | Auth |
 |---|---|---|
 | `GET /api/health/live` | The process is running and the event loop responds. Never touches the database. | none |
-| `GET /api/health/ready` | Can do its job: the database answers `SELECT 1`, the schema is at the Alembic head, and the worker heartbeat is fresh (when the worker is enabled). 503 with a list of failing checks otherwise. | none (no details beyond pass/fail names) |
+| `GET /api/health/ready` | Can do its job: the database answers `SELECT 1`, the schema is at the Alembic head, and the worker heartbeat is fresh (when the worker is enabled; this check is added with the worker in Phase 3). 503 with a list of failing checks otherwise. | none (no details beyond pass/fail names) |
+| `GET /api/auth/session` | Whether the caller is signed in, and the auth mode. `POST` signs in with the operator token; `DELETE` signs out. | none |
 | `GET /api/system/status` | Worker heartbeat and loop lag, in-flight checks, last retention run, GitHub sync status and rate-limit remaining, database size, version, configuration warnings. | operator |
-| `GET /api/system/config` | Effective non-secret configuration. Secrets are shown only as `set` / `not set`. | operator |
+| `GET /api/system/config` | Effective non-secret configuration and configuration warnings. Secrets are shown only as `set` / `not set`. *(Implemented in Phase 2; `/status` comes with the worker.)* | operator |
 
 Liveness answers "should this container be restarted?". Readiness answers "should traffic or trust
 be given to it?". A monitor whose worker has died is alive but not ready.
@@ -330,7 +332,9 @@ be given to it?". A monitor whose worker has died is alive but not ready.
 
 ## 8. Data model
 
-All timestamps are stored as UTC (`DATETIME` in ISO-8601 with `+00:00`) and converted in the browser.
+All timestamps are UTC. SQLite has no timezone-aware type, so a `UTCDateTime` column type stores
+naive UTC, returns timezone-aware values and **rejects naive input** instead of guessing. The API
+emits ISO-8601 with an explicit offset, and the browser converts for display.
 Integer primary keys are used internally. Applications also have a URL-safe `slug` used in routes.
 
 ```mermaid
@@ -366,14 +370,20 @@ deployments indefinitely (they are small). An hourly retention job deletes in ba
 write locks short.
 
 **Schema changes** go through **Alembic** migrations, which are applied at start-up (single-process
-deployment) or with `cloudops db upgrade`. SQLite batch mode handles column changes.
+deployment) or with `cloudops db upgrade`. SQLite batch mode handles column changes. Migrations run
+on a separate engine with foreign keys off (batch mode re-creates tables, which would otherwise
+cascade deletes) and with real `BEGIN IMMEDIATE`/`COMMIT` around DDL, so an upgrade is all or
+nothing. A test checks that the migrated schema matches the models exactly.
 
 **Backups.** `cloudops db backup <path>` uses SQLite's online backup API, so it is safe while the
 app runs. In Docker, the data volume is the unit to back up.
 
 **SQLite settings:** WAL journal, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL`.
-Writes are short transactions. The worker batches the results of a scheduling tick into one
-transaction.
+The application engine keeps the sqlite3 driver's default transaction handling: a write
+transaction starts at the first INSERT, UPDATE or DELETE. A read followed by a write therefore
+never has to upgrade a read snapshot, which SQLite refuses immediately ("database is locked")
+instead of waiting. Writes are short transactions. The worker batches the results of a scheduling
+tick into one transaction.
 
 ## 9. Request flow examples
 

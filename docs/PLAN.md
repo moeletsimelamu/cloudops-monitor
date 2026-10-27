@@ -7,8 +7,8 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Discovery and architecture | Done — awaiting review |
-| 2 | Backend foundation | Not started |
+| 1 | Discovery and architecture | Done — approved 2026-10-27 |
+| 2 | Backend foundation | Done — 95 tests, ruff and mypy clean |
 | 3 | Application registry and monitoring | Not started |
 | 4 | Events, logs and deployment records | Not started |
 | 5 | Frontend and product design | Not started |
@@ -273,3 +273,8 @@ names only), verification of every claim, final report.
 | D12 | Operator token → HttpOnly SameSite=Strict session; disabled mode for local development only | Protects operations once reachable beyond localhost without building user management. |
 | D13 | Angular 21.2, hand-written SVG charts, no UI kit | Node 22.14 constraint; small, accessible, distinctive UI. |
 | D14 | Option A (GHCR image) as the baseline deployment; VM over SSH only if approved | Zero-cost and verifiable; avoids PaaS that cannot keep a worker and disk. |
+| D15 | The application engine keeps the sqlite3 driver's default transactions; the migration engine uses real `BEGIN IMMEDIATE` around DDL with foreign keys off | The app avoids "database is locked" when a read snapshot is upgraded to a write; migrations are all-or-nothing, and batch table re-creation cannot cascade deletes. |
+| D16 | All tables created in the Alembic baseline, including those used only from Phase 3/4 | One reviewed baseline. Later phases add columns through new revisions, which exercises the migration path for real. |
+| D17 | Start-up refuses a missing, short or `.env.example` placeholder operator token; blank secrets count as unset | A copied example file must not run with a known token, and an empty variable must not show as "set". |
+| D18 | The log handler resolves `sys.stdout` at write time | Found in testing: a handler bound at start-up wrote to a closed stream once the runner replaced stdout. |
+| D19 | Readiness reads `alembic_version` directly; head revision cached | Alembic's MigrationContext logs at INFO on each call, and readiness is polled often. |

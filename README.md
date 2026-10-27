@@ -5,9 +5,10 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 1 (architecture and planning).** No application code exists yet. This
-> README describes the planned system. Features are listed as they are implemented and verified.
-> Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
+> **Project status: Phase 2 of 10 (backend foundation).** The API skeleton, database schema,
+> health endpoints and operator sign-in exist and are tested. Monitoring, deployments, logs and the
+> interface are not built yet. This README describes the planned system. Features are listed as
+> they are implemented and verified. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
 [OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
@@ -66,5 +67,46 @@ ingest endpoint. Deployment records are pulled from the GitHub REST API. See
 | [docs/DESIGN.md](docs/DESIGN.md) | Interface principles, visual identity, screens, accessibility, responsive behaviour |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, SSRF controls, authentication, secrets, logging hygiene |
 
-Setup, Docker, testing, CI/CD and deployment instructions will be added as each part is built and
+## Development setup (backend)
+
+Requires Python 3.12 or newer. Commands are shown for Windows (PowerShell). On Linux or macOS, use
+`.venv/bin/` instead of `.venv\Scripts\`.
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\python -m pip install -c constraints.txt -e ".[dev]"
+```
+
+Configure, then start the API on http://127.0.0.1:8300 (migrations run automatically):
+
+```powershell
+copy ..\.env.example .env
+.venv\Scripts\cloudops generate-token
+```
+
+Put the generated token in `CLOUDOPS_OPERATOR_TOKEN` in `backend/.env`, then:
+
+```powershell
+.venv\Scripts\python -m uvicorn cloudops.main:create_app --factory --port 8300
+```
+
+Checks used during development and in CI:
+
+```powershell
+.venv\Scripts\python -m pytest
+```
+
+```powershell
+.venv\Scripts\ruff check .
+```
+
+```powershell
+.venv\Scripts\mypy
+```
+
+Health endpoints: `GET /api/health/live` (process up) and `GET /api/health/ready` (database and
+schema usable). API documentation is at `/api/docs` while `CLOUDOPS_API_DOCS=true`.
+
+Docker, frontend, CI/CD and deployment instructions will be added as each part is built and
 verified.

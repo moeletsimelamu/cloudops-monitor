@@ -1,7 +1,11 @@
 # CloudOps Monitor — Security
 
-> **Status:** Phase 1 threat model and planned controls. Nothing here is implemented yet. Phase 8
-> turns each "planned" item into "implemented and tested" or records it as a gap.
+> **Status:** threat model and controls. **Implemented and tested in Phase 2:** operator
+> authentication (§4: sessions, constant-time token check, sign-in rate limit, Origin and Host
+> guard), secrets handling (§5: blank and placeholder tokens refused, `set`/`not set` display,
+> redaction of CloudOps's own logs), the error envelope (§8) and security headers (§9). The
+> target policy (§3), ingest redaction (§7) and container controls are still planned. Phase 8
+> reviews every item.
 
 ## 1. Deployment assumptions
 
@@ -89,6 +93,10 @@ Always enforced, whatever the policy:
   public origin. Together with SameSite=Strict, this protects against CSRF.
 - `CLOUDOPS_AUTH_MODE=disabled` is accepted for local development. It is shown in a banner and in
   the logs.
+- Start-up is refused when token mode has no token, a token shorter than 32 characters, or the
+  placeholder value from `.env.example`. The error message never repeats the value.
+- The failed sign-in limiter is in memory and per process. That matches the single-process
+  deployment, but it resets on restart.
 
 ## 5. Secrets
 
