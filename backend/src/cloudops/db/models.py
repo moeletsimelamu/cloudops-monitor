@@ -87,7 +87,11 @@ class Application(Base):
     # Current health, maintained by the monitoring worker.
     health_state: Mapped[str] = mapped_column(String(16), default="unknown")
     state_since: Mapped[datetime | None]
-    last_check_at: Mapped[datetime | None]
+    # The last *conclusive* check (ok/warn/fail). Freshness is judged on this, so checks the
+    # monitor could not complete (inconclusive) make an application stale, not fresh.
+    last_observed_at: Mapped[datetime | None]
+    # The last check of any kind, including inconclusive ones.
+    last_attempt_at: Mapped[datetime | None]
     last_success_at: Mapped[datetime | None]
     last_failure_at: Mapped[datetime | None]
     last_failure_reason: Mapped[str | None] = mapped_column(String(32))

@@ -3,13 +3,20 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
-from cloudops.db.migrate import current_revision, downgrade_to, head_revision, upgrade_to_head
+from cloudops.db.migrate import (
+    alembic_config,
+    current_revision,
+    downgrade_to,
+    head_revision,
+    upgrade_to_head,
+)
 from cloudops.db.models import Application, Base, HealthCheck, Incident, OperationalEvent
 from cloudops.db.session import create_db_engine, create_session_factory, session_scope
 
@@ -175,3 +182,44 @@ def test_session_scope_rolls_back_on_error(engine: Engine) -> None:
         raise RuntimeError("boom")
     with session_scope(factory) as session:
         assert session.scalars(select(Application)).all() == []
+
+
+def test_observation_rename_migration_keeps_data(tmp_path: Path) -> None:
+    """Revision fa05ffb1e657 renames last_check_at instead of dropping it (autogenerate's plan)."""
+    path = tmp_path / "upgrade.db"
+    engine = create_db_engine(path, for_migrations=True)
+    try:
+        with engine.connect() as connection:
+            command.upgrade(alembic_config(connection), "fa400bccf9c8")
+            connection.execute(
+                text(
+                    "INSERT INTO applications (slug, name, description, environment, check_url,"
+                    " interval_seconds, timeout_seconds, slow_threshold_ms, failure_threshold,"
+                    " recovery_threshold, monitoring_enabled, health_state, last_check_at,"
+                    " created_at, updated_at) VALUES ('a', 'A', '', 'demo', 'http://a:1/', 60, 5,"
+                    " 1000, 2, 2, 1, 'healthy', '2026-10-27 10:00:00', '2026-10-27 09:00:00',"
+                    " '2026-10-27 09:00:00')"
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
+
+    upgrade_to_head(path)
+    app_engine = create_db_engine(path)
+    try:
+        with create_session_factory(app_engine)() as db:
+            app = db.scalars(select(Application)).one()
+            assert app.last_observed_at == datetime(2026, 10, 27, 10, 0, tzinfo=UTC)
+            assert app.last_attempt_at == app.last_observed_at
+    finally:
+        app_engine.dispose()
+
+    downgrade_to(path, "fa400bccf9c8")
+    engine = create_db_engine(path)
+    try:
+        with engine.connect() as connection:
+            value = connection.execute(text("SELECT last_check_at FROM applications")).scalar_one()
+        assert str(value).startswith("2026-10-27 10:00:00")
+    finally:
+        engine.dispose()

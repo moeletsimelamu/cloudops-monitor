@@ -17,6 +17,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from cloudops import __version__
 from cloudops.db.migrate import current_revision, head_revision
+from cloudops.db.types import utc_now
+from cloudops.monitoring.worker import MonitoringWorker
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,17 @@ def readiness_checks(engine: Engine) -> dict[str, CheckStatus]:
 )
 def ready(request: Request) -> JSONResponse:
     checks = readiness_checks(request.app.state.engine)
+    worker: MonitoringWorker | None = request.app.state.worker
+    if worker is None:
+        checks["worker"] = "skipped"  # disabled by configuration (CLOUDOPS_WORKER_ENABLED=false)
+    elif worker.is_healthy(utc_now()):
+        checks["worker"] = "ok"
+    else:
+        logger.error(
+            "Readiness: the monitoring worker is not running or has stopped ticking",
+            extra={"fields": {"event": "readiness.worker_stalled"}},
+        )
+        checks["worker"] = "error"
     is_ready = all(status != "error" for status in checks.values())
     body = ReadinessResponse(status="ready" if is_ready else "not_ready", checks=checks)
     return JSONResponse(status_code=200 if is_ready else 503, content=body.model_dump())

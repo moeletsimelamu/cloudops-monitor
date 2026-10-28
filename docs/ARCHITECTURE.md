@@ -1,9 +1,11 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phase 2 complete: configuration, structured logging, the error envelope, the full
-> database schema (Alembic baseline), liveness and readiness, and operator authentication are
-> implemented and tested (§7, §8). Monitoring, events, logs and deployments (§3–§6) are still
-> design. Differences from the design are recorded in the decision log in [PLAN.md](PLAN.md).
+> **Status:** Phases 2 and 3 complete. Configuration, logging, the error envelope, the schema,
+> liveness and readiness, operator authentication (§7, §8), the application registry, health
+> checks, state, incidents, health history and metrics (§3), and the events those produce (§4)
+> are implemented and tested. Log ingestion, deployment records and the event API (§4–§6) are
+> still design. Differences from the design are recorded in the decision log in
+> [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
 
@@ -50,10 +52,11 @@ Why a monolith rather than separate API / worker / ingest services:
 | Module (`backend/src/cloudops/…`) | Responsibility | Talks to |
 |---|---|---|
 | `config.py` | Typed settings from `CLOUDOPS_*` environment variables (pydantic-settings). Validates at start-up and collects non-fatal configuration warnings for the System view. Secrets are `SecretStr` and never serialised. | — |
-| `logging.py` | JSON-lines structured logging to stdout, a request-ID middleware, and a redaction filter. | — |
+| `logging_setup.py` | JSON-lines structured logging to stdout, a request-ID middleware, and a redaction filter. | — |
 | `api/` | FastAPI routers, request/response schemas, the error envelope, auth dependencies and pagination helpers. Contains no business rules. | `domain`, `db` |
 | `domain/` | Pure functions: check classification, the health state machine, incident open/close, availability and latency statistics, redaction rules and deployment-status mapping. No I/O, so it is unit-tested exhaustively. | — |
-| `monitoring/` | Target policy (SSRF guard), the HTTP probe, the scheduler loop, the heartbeat and retention clean-up. | `domain`, `db`, network |
+| `monitoring/` | Target policy (SSRF guard), the HTTP probe, the recorder (check → state → incident → events in one transaction), the check runner shared by the scheduler and "check now", the worker loop with heartbeat, and retention clean-up. | `domain`, `db`, network |
+| `events.py` | Writing operational events in the caller's transaction. | `db` |
 | `deployments/` | GitHub Actions client (REST, ETag-aware), mapping runs to `DeploymentRecord`s, and the sync job. | `domain`, `db`, GitHub |
 | `ingest/` | Validation, size limits and redaction for pushed log batches. | `domain`, `db` |
 | `db/` | SQLAlchemy 2.x models, engine/session setup (WAL, foreign keys, busy timeout), repositories (query functions), and Alembic migrations. | SQLite |
@@ -69,9 +72,13 @@ The frontend is a separate Angular workspace (`frontend/`) that talks only to th
 - The worker loop wakes every second. It selects applications that are due, enabled and not
   already in flight, and launches their probes concurrently. A semaphore caps concurrency
   (`CLOUDOPS_MONITOR_MAX_CONCURRENCY`, default 10).
-- Every probe runs under a hard deadline: `asyncio.timeout(timeout_seconds + 1)`, wrapped around
-  an httpx client that has its own connect and read timeouts. A slow target can delay only its
-  own next check, never the loop or the other targets.
+- Every probe runs under a hard deadline: `asyncio.timeout(timeout_seconds + 1)`, around
+  httpcore2 connect, read and write timeouts. A slow target can delay only its own next check,
+  never the loop or the other targets (tested: a 1 s target does not hold up a fast one).
+- At most one check per application runs at a time. The scheduler and "check now" share the same
+  in-flight set, and "check now" gets 409 while a scheduled check runs.
+- Database work runs in worker threads. The worker shares the API's event loop and must never
+  block it.
 - After a probe, `next_check_at = started_at + interval`, plus jitter of up to 10% so checks spread
   out. If the worker falls behind, overdue checks run once. Missed slots are not replayed.
 - **Run check now** (API, authenticated) calls the same probe directly and stores the result like
@@ -81,13 +88,21 @@ The frontend is a separate Angular workspace (`frontend/`) that talks only to th
 
 1. **Policy check before connecting** (see §7 and [SECURITY.md](SECURITY.md)). The URL scheme,
    host and port must match the target policy.
-2. **Pinned connection.** The hostname is resolved inside a custom network backend. Every resolved
-   address is checked against the blocked ranges, and the connection is made to the address that
-   was checked. This avoids a time-of-check/time-of-use gap (DNS rebinding). TLS still verifies
-   the certificate against the original hostname (SNI).
-3. A `GET` with `Accept: application/json, */*`, a fixed `User-Agent: CloudOpsMonitor/<version>`,
+2. **Pinned connection.** The probe uses httpcore2's connection pool directly, because unlike
+   httpx2's transport it accepts a custom network backend. The hostname is resolved inside that
+   backend. Every resolved address is checked against the blocked ranges, and the connection is
+   made to an address that was checked. This avoids a time-of-check/time-of-use gap (DNS
+   rebinding). TLS still verifies the certificate against the original hostname (SNI). Proxy
+   environment variables are never read, and every check opens a fresh connection.
+3. **Several addresses ("Happy Eyeballs", RFC 8305).** When a name resolves to several addresses,
+   attempts start 250 ms apart, or as soon as the previous one fails, and the first to connect
+   wins. *Found in the Phase 3 live run:* trying addresses strictly in turn made every
+   `localhost` check wait about 2 s for `::1` to be refused on Windows. A healthy sandbox was
+   reported as slow and degraded. The measured time still includes the stagger (about 250 ms in
+   that case), which a real client would also experience.
+4. A `GET` with `Accept: application/json, */*`, a fixed `User-Agent: CloudOpsMonitor/<version>`,
    **redirects not followed**, and at most 64 KiB of the body read.
-4. The duration is measured with a monotonic clock, from just before the request until the
+5. The duration is measured with a monotonic clock, from just before the request until the
    response headers arrive or the probe fails.
 
 ### 3.3 Classifying one check → a *signal*
@@ -110,6 +125,8 @@ machine-readable reason and a short human-readable detail.
 | DNS resolution failure | fail | `dns_failure` | — |
 | Connection refused or reset | fail | `connection_failed` | — |
 | TLS handshake or certificate failure | fail | `tls_error` | — |
+| Connected, but no valid HTTP response (the server hung up, or spoke another protocol) | fail | `protocol_error` | — |
+| 1xx or a status above 599 | warn | `unexpected_status` | Not a meaningful health answer. |
 | Destination blocked by policy at check time, for example the DNS answer changed to a private address | inconclusive | `target_blocked` | The monitor cannot observe the application. This is a configuration or security problem, not application health. It raises a `monitoring.target_blocked` event. |
 | An unexpected error inside the monitor | inconclusive | `monitor_error` | The fault is in the monitor, not the target. |
 
@@ -152,6 +169,7 @@ application turns stale within minutes, and the System view shows the worker's h
 ### 3.6 Incidents and transitions
 
 - A transition from `healthy` or `unknown` to `degraded` or `unavailable` **opens an incident**.
+  `unknown → healthy` (the first good check) records nothing.
 - `degraded ↔ unavailable` inside an open incident updates the incident's worst state and emits
   `health.escalated` or `health.improved`. It does not open a new incident.
 - A transition to `healthy` **closes** the incident and emits `health.recovered` with the duration.
@@ -319,7 +337,23 @@ wording reports timing only and makes no claim about cause.
 Liveness answers "should this container be restarted?". Readiness answers "should traffic or trust
 be given to it?". A monitor whose worker has died is alive but not ready.
 
-### 7.2 Operator authentication
+### 7.2 Application API (implemented in Phase 3)
+
+All routes need the operator. Errors use the envelope from §7.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/applications[?environment=]` | Every application with its displayed status, freshness, open incident and latest check (a fixed number of queries, whatever the count). |
+| `POST /api/applications` | Register. Validated, target-policy checked (and, in public mode, DNS-checked), first check scheduled immediately. |
+| `GET/PATCH/DELETE /api/applications/{slug}` | Read; partial update (validated against the stored settings, URL re-checked, event lists changed field names); delete (an audit event survives). |
+| `POST /api/applications/{slug}/pause`, `/resume` | Stop or restart scheduled checks. Pause history feeds the coverage calculation. |
+| `POST /api/applications/{slug}/checks` | Check now. 429 within 5 s of the previous manual check, 409 while a check runs. |
+| `GET /api/applications/{slug}/checks?from&to&signal&limit&before` | History, newest first, keyset-paged. Ranges need a time zone and may span at most 30 days. |
+| `GET /api/applications/{slug}/incidents` | Incidents, newest first, with durations. |
+| `GET /api/applications/{slug}/metrics?window=1h\|6h\|24h\|7d` | Availability, coverage, p50/p95, buckets, and the definitions shown next to them in the UI. |
+| `GET /api/system/status` | Worker (running, last tick, loop lag, failures, in-flight checks, last retention), database size and counts, configuration warnings. |
+
+### 7.3 Operator authentication
 
 - `CLOUDOPS_AUTH_MODE=token` (default in Docker): one operator token (`CLOUDOPS_OPERATOR_TOKEN`, at
   least 32 characters) is exchanged on the sign-in page for an **HttpOnly, SameSite=Strict session
@@ -350,7 +384,7 @@ erDiagram
 
 | Table | Key columns | Indexes |
 |---|---|---|
-| `applications` | slug (unique), name, description, environment, check_url, interval_s, timeout_s, slow_threshold_ms, failure_threshold, recovery_threshold, monitoring_enabled, health_state, state_since, last_check_at, last_success_at, last_failure_at, last_failure_reason, next_check_at, github_repo, deploy_workflow, deploy_branch, ingest_key_hash, created_at, updated_at | slug, next_check_at |
+| `applications` | slug (unique), name, description, environment, check_url, interval_s, timeout_s, slow_threshold_ms, failure_threshold, recovery_threshold, monitoring_enabled, health_state, state_since, last_observed_at (last conclusive check), last_attempt_at (any check), last_success_at, last_failure_at, last_failure_reason, next_check_at, github_repo, deploy_workflow, deploy_branch, ingest_key_hash, created_at, updated_at | slug, next_check_at |
 | `health_checks` | application_id, started_at, duration_ms, http_status, signal, reason, detail, resolved_ip, state_after | (application_id, started_at) |
 | `incidents` | application_id, opened_at, closed_at, worst_state, opening_reason | (application_id, opened_at); partial unique (application_id) where closed_at is null |
 | `events` | occurred_at, type, severity, application_id, incident_id, deployment_id, summary, details (JSON) | (occurred_at), (application_id, occurred_at) |

@@ -17,6 +17,9 @@ dependencies = [
     "sqlalchemy==2.1.6",
     "alembic==1.20.1",
     "httpx2==2.16.0",
+    # Used directly by the health-check probe (custom network backend for pinned connections).
+    "httpcore2==2.16.0",
+    "anyio==4.15.1",
 ]
 
 [project.optional-dependencies]

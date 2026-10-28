@@ -4,8 +4,8 @@
 > authentication (§4: sessions, constant-time token check, sign-in rate limit, Origin and Host
 > guard), secrets handling (§5: blank and placeholder tokens refused, `set`/`not set` display,
 > redaction of CloudOps's own logs), the error envelope (§8) and security headers (§9). The
-> target policy (§3), ingest redaction (§7) and container controls are still planned. Phase 8
-> reviews every item.
+> target policy (§3) followed in Phase 3. Ingest redaction (§7) and container controls are still
+> planned. Phase 8 reviews every item.
 
 ## 1. Deployment assumptions
 
@@ -71,7 +71,17 @@ Always enforced, whatever the policy:
    field. Response bodies are never stored or returned to the browser. Only the status code, timing,
    reason and a short detail are kept.
 
-### 3.3 Remaining limitations (to verify in Phase 8)
+### 3.3 What the Phase 3 tests cover
+
+Every structural URL rule; every always-blocked range, including IPv4-mapped forms and the IPv6
+metadata address; allowlist matching (case, trailing dot, bracketed IPv6); public-mode refusal of
+private, CGNAT, unique-local and documentation addresses; and, over real sockets, a public name
+re-resolving to a private address, an allowlisted name resolving to the metadata address,
+redirects not followed, the 64 KiB body cap and the hard deadline. When a name has several
+addresses, **all** of them are checked before any connection attempt. One blocked address blocks
+the check, even if the others are fine.
+
+### 3.4 Remaining limitations (to verify in Phase 8)
 
 - An allowlisted hostname is trusted to point wherever its DNS points. The allowlist is only as good
   as the operator's control of those names.

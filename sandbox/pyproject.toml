@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudops-sandbox"
+version = "0.1.0"
+description = "A controllable test target for CloudOps Monitor: real HTTP responses whose health you switch on purpose."
+requires-python = ">=3.12"
+authors = [{ name = "Moeletsi Melamu" }]
+# Same pinned versions as the backend (see ../backend/constraints.txt).
+dependencies = [
+    "fastapi==0.162.0",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+cloudops-sandbox = "cloudops_sandbox.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF", "PTH", "LOG", "G"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["cloudops_sandbox", "tests"]

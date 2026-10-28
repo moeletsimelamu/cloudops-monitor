@@ -5,10 +5,11 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 2 of 10 (backend foundation).** The API skeleton, database schema,
-> health endpoints and operator sign-in exist and are tested. Monitoring, deployments, logs and the
-> interface are not built yet. This README describes the planned system. Features are listed as
-> they are implemented and verified. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
+> **Project status: Phase 3 of 10.** The backend registers applications, checks their health on a
+> schedule, tracks state and incidents, and serves health history and metrics. It is tested
+> against a controllable sandbox service. Deployments, logs and the web interface are not built
+> yet. Features are listed as they are implemented and verified. Progress is tracked in
+> [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
 [OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
@@ -107,6 +108,30 @@ Checks used during development and in CI:
 
 Health endpoints: `GET /api/health/live` (process up) and `GET /api/health/ready` (database and
 schema usable). API documentation is at `/api/docs` while `CLOUDOPS_API_DOCS=true`.
+
+## Trying it with the sandbox
+
+The sandbox (`sandbox/`) is a small service whose health you switch on purpose. CloudOps Monitor
+then observes real HTTP responses from a real process. Install it into the backend's environment
+and run it on http://127.0.0.1:8310:
+
+```powershell
+.venv\Scripts\python -m pip install -e ..\sandbox
+.venv\Scripts\python -m cloudops_sandbox
+```
+
+With `CLOUDOPS_ALLOWED_TARGETS=localhost:8310` in `backend/.env`, register it and break it (any
+HTTP client works; these use PowerShell):
+
+```powershell
+$h = @{ Authorization = "Bearer <your operator token>" }
+Invoke-RestMethod -Method Post http://localhost:8300/api/applications -Headers $h -ContentType application/json -Body '{"slug":"sandbox-orders","name":"Sandbox orders","environment":"demo","check_url":"http://localhost:8310/health","interval_seconds":15}'
+Invoke-RestMethod -Method Put http://localhost:8310/control/mode -ContentType application/json -Body '{"mode":"errors"}'
+```
+
+Within two checks the application turns **degraded**, an incident opens and an event is recorded.
+Switch back with `{"mode":"healthy"}` to see it recover. The sandbox's modes are `healthy`,
+`degraded`, `errors`, `slow`, `unavailable` and `flaky`.
 
 Docker, frontend, CI/CD and deployment instructions will be added as each part is built and
 verified.

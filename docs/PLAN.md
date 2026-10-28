@@ -9,7 +9,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 |---|---|---|
 | 1 | Discovery and architecture | Done — approved 2026-10-27 |
 | 2 | Backend foundation | Done — 95 tests, ruff and mypy clean |
-| 3 | Application registry and monitoring | Not started |
+| 3 | Application registry and monitoring | Done — 333 backend + 8 sandbox tests; live run against the sandbox |
 | 4 | Events, logs and deployment records | Not started |
 | 5 | Frontend and product design | Not started |
 | 6 | CI/CD and packaging | Not started |
@@ -278,3 +278,10 @@ names only), verification of every claim, final report.
 | D17 | Start-up refuses a missing, short or `.env.example` placeholder operator token; blank secrets count as unset | A copied example file must not run with a known token, and an empty variable must not show as "set". |
 | D18 | The log handler resolves `sys.stdout` at write time | Found in testing: a handler bound at start-up wrote to a closed stream once the runner replaced stdout. |
 | D19 | Readiness reads `alembic_version` directly; head revision cached | Alembic's MigrationContext logs at INFO on each call, and readiness is polled often. |
+| D20 | The probe uses httpcore2's connection pool directly, with a custom network backend | httpx2's transport does not expose the network backend; httpcore2's is public API. Also means no proxy settings from the environment. |
+| D21 | Several resolved addresses are raced 250 ms apart (RFC 8305) | Found in the live run: sequential attempts added ~2 s per `localhost` check on Windows (`::1` refused slowly), so a healthy app looked degraded. A regression test fails with sequential attempts (2,047 ms) and passes now. |
+| D22 | `last_check_at` renamed to `last_observed_at` (conclusive checks) and `last_attempt_at` added; the migration was hand-edited | Freshness must ignore checks the monitor could not complete. Autogenerate proposed drop-and-add, which loses data; a test covers upgrade and downgrade with data. |
+| D23 | Reading the registry and history also needs the operator | Configuration and incident history are sensitive once the server is reachable by others. |
+| D24 | One blocked address among several blocks the check | Conservative: a name that points anywhere forbidden is suspect even if another address is fine. |
+| D25 | "Check now" shares the scheduler's in-flight set (409 while running) and is spaced 5 s per application (429) | One check at a time per application keeps the state machine's ordering correct; spacing stops the button being used as a load generator. |
+| D26 | The sandbox is a separate small package (`sandbox/`) with the same pinned FastAPI/uvicorn | It is a test target, not part of the product; keeping it separate keeps the product image free of it. |
