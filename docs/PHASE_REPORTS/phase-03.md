@@ -78,3 +78,19 @@ checks ran during that time" (`gap_seconds` 733). Readiness reported `worker: ok
 The README's PowerShell commands for the sandbox were also run as written. The worker alone (no
 "check now") turned the application **degraded** with reason `server_error` within the 60-second
 wait.
+
+## Post-phase fixes (2026-11-03, found while starting Phase 4)
+
+A baseline test run failed intermittently, so the suite was run in eight parallel copies to create
+contention. That exposed two real defects and one racy test:
+
+- **Shutdown race.** `worker.stop()` used native task cancellation, which anyio's shielding does not
+  cover. A thread writing to the database kept running after `stop()` returned, so the engine could
+  be disposed under it and its connection leaked (seen as an `unclosed database` warning). Database
+  work now goes through `run_db_work`, which finishes the work before delivering cancellation.
+- **False "not ready" at start-up.** Readiness failed between start-up and the first tick. A worker
+  now counts from its start time until it has ticked; one that never ticks still fails after 30 s.
+- **Racy test.** `test_the_loop_survives_a_failing_tick` stopped the worker before the loop had reset
+  its failure counter.
+
+After the fixes, eight parallel runs of the timing-sensitive tests all passed (86 tests each).

@@ -10,12 +10,11 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Protocol
 
-import anyio
 from sqlalchemy.orm import Session, sessionmaker
 
 from cloudops.config import Settings
 from cloudops.db.models import Application
-from cloudops.db.session import session_scope
+from cloudops.db.session import run_db_work, session_scope
 from cloudops.db.types import utc_now
 from cloudops.domain.classification import Observation, ProbeError
 from cloudops.monitoring.probe import probe
@@ -87,7 +86,7 @@ class CheckRunner:
                     observation = Observation(
                         None, error=ProbeError.MONITOR_ERROR, error_detail=type(error).__name__
                     )
-            return await anyio.to_thread.run_sync(
+            return await run_db_work(
                 self._record, application_id, observation, started_at, manual, reschedule
             )
         finally:

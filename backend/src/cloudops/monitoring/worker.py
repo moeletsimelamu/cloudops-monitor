@@ -14,13 +14,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import anyio
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from cloudops.config import Settings
 from cloudops.db.models import Application, SystemState
-from cloudops.db.session import session_scope
+from cloudops.db.session import run_db_work, session_scope
 from cloudops.db.types import utc_now
 from cloudops.events import humanize_duration, record_event
 from cloudops.monitoring.retention import RetentionResult, run_retention
@@ -77,7 +76,7 @@ class MonitoringWorker:
 
     async def start(self) -> None:
         self.started_at = self.clock()
-        await anyio.to_thread.run_sync(self._record_start, self.started_at)
+        await run_db_work(self._record_start, self.started_at)
         self._task = asyncio.create_task(self._run(), name="cloudops-monitoring-worker")
 
     async def stop(self) -> None:
@@ -90,7 +89,11 @@ class MonitoringWorker:
         self._task = None
 
     def is_healthy(self, now: datetime, max_age: timedelta = timedelta(seconds=30)) -> bool:
-        return self.running and self.last_tick_at is not None and now - self.last_tick_at <= max_age
+        """Running, and ticked recently. A worker that has just started counts from its start
+        time, so the moment before the first tick is not reported as a stall, while one that
+        never completes a tick is still caught after ``max_age``."""
+        reference = self.last_tick_at or self.started_at
+        return self.running and reference is not None and now - reference <= max_age
 
     # --- loop ------------------------------------------------------------------------------
 
@@ -127,9 +130,9 @@ class MonitoringWorker:
         """One scheduling pass. Returns the number of checks started."""
         now = self.clock()
         if time.monotonic() - self._last_heartbeat >= self.heartbeat_seconds:
-            await anyio.to_thread.run_sync(self._write_heartbeat, now)
+            await run_db_work(self._write_heartbeat, now)
             self._last_heartbeat = time.monotonic()
-        due = await anyio.to_thread.run_sync(self._due_checks, now)
+        due = await run_db_work(self._due_checks, now)
         started = 0
         for item in due:
             try:
@@ -156,9 +159,7 @@ class MonitoringWorker:
             await asyncio.gather(*self._checks, return_exceptions=True)
 
     async def retention(self) -> None:
-        result = await anyio.to_thread.run_sync(
-            run_retention, self.session_factory, self.settings, self.clock()
-        )
+        result = await run_db_work(run_retention, self.session_factory, self.settings, self.clock())
         self.last_retention = result
         if result.health_checks or result.events or result.log_entries:
             logger.info(

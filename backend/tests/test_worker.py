@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+import threading
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -247,7 +248,7 @@ async def test_the_loop_survives_a_failing_tick(
     monkeypatch.setattr(worker, "_due_checks", flaky)
     await worker.start()
     deadline = time.monotonic() + 3
-    while not probe.calls and time.monotonic() < deadline:
+    while time.monotonic() < deadline and (not probe.calls or worker.consecutive_tick_failures):
         await asyncio.sleep(0.05)
     await worker.stop()
     assert probe.calls == ["http://orders-api:8310/health"]
@@ -317,3 +318,44 @@ async def test_retention_removes_old_records_and_caps_logs(
     assert "old" not in messages
     assert "entry 0" in messages  # the newest entries are kept
     assert "entry 1004" not in messages
+
+
+async def test_a_worker_that_just_started_is_healthy_but_one_that_never_ticks_is_not(
+    factory: sessionmaker[Session], settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: readiness failed in the instant between start-up and the first tick."""
+    worker = _worker(factory, settings, FakeProbe(), Clock())
+
+    async def never_finishes() -> int:
+        await asyncio.sleep(60)
+        return 0
+
+    monkeypatch.setattr(worker, "tick", never_finishes)
+    await worker.start()
+    await asyncio.sleep(0)
+    assert worker.last_tick_at is None
+    assert worker.is_healthy(NOW)
+    assert not worker.is_healthy(NOW + timedelta(minutes=5))
+    await worker.stop()
+
+
+async def test_stop_waits_for_database_work_in_progress(
+    factory: sessionmaker[Session], settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: stop() returned while a thread was still using the database, so the engine
+    was disposed under it and its connection leaked."""
+    worker = _worker(factory, settings, FakeProbe(), Clock())
+    started, finished = threading.Event(), threading.Event()
+
+    def slow_query(now: datetime) -> list[object]:
+        started.set()
+        time.sleep(0.3)
+        finished.set()
+        return []
+
+    monkeypatch.setattr(worker, "_due_checks", slow_query)
+    await worker.start()
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    await worker.stop()
+    assert finished.is_set()

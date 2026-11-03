@@ -29,7 +29,7 @@ from cloudops.api.deps import OperatorDep, SessionDep
 from cloudops.api.params import Before, Limit, TimeRange, time_range
 from cloudops.api.views import application_views, check_out, incident_out, metrics
 from cloudops.db.models import Application, HealthCheck, Incident
-from cloudops.db.session import session_scope
+from cloudops.db.session import run_db_work, session_scope
 from cloudops.db.types import utc_now
 from cloudops.errors import AppError, ConflictError, NotFoundError
 from cloudops.events import record_event
@@ -271,7 +271,7 @@ def _load_check(request: Request, check_id: int) -> CheckOut:
 @router.post("/{slug}/checks", response_model=CheckOut, status_code=HTTPStatus.CREATED)
 async def run_check_now(slug: str, request: Request) -> CheckOut:
     """Run a health check immediately and return its result. Stored like any other check."""
-    app_id, url, timeout = await anyio.to_thread.run_sync(_load_target, request, slug)
+    app_id, url, timeout = await run_db_work(_load_target, request, slug)
     last_manual: dict[int, float] = request.app.state.manual_checks
     wait = MANUAL_CHECK_INTERVAL_SECONDS - (time.monotonic() - last_manual.get(app_id, -1e9))
     if wait > 0:
@@ -294,7 +294,7 @@ async def run_check_now(slug: str, request: Request) -> CheckOut:
     result = await runner.run(app_id, url, timeout, manual=True)
     if result is None:
         raise NotFoundError(f"There is no application '{slug}'.")
-    return await anyio.to_thread.run_sync(_load_check, request, result.check_id)
+    return await run_db_work(_load_check, request, result.check_id)
 
 
 @router.get("/{slug}/checks", response_model=CheckPage)

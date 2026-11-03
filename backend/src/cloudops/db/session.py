@@ -1,11 +1,13 @@
 """Database engine and sessions."""
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from sqlite3 import Connection as SQLiteConnection
 from typing import Any
 
+import anyio
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -66,3 +68,19 @@ def session_scope(factory: sessionmaker[Session]) -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+async def run_db_work[T](function: Callable[..., T], *args: Any) -> T:
+    """Run blocking database work in a thread, to completion even if this task is cancelled.
+
+    A cancelled task would otherwise stop waiting while the thread carries on writing: anyio's
+    shielding does not cover native ``task.cancel()``. Shutdown could then dispose the engine
+    under a running transaction and leak its connection. Cancellation is delivered once the
+    work has finished.
+    """
+    work = asyncio.ensure_future(anyio.to_thread.run_sync(function, *args))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        await asyncio.wait([work])
+        raise
