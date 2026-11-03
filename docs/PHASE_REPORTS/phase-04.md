@@ -61,7 +61,8 @@ DocuMind's latest run was a week old. It is covered by tests against fake GitHub
   which only a listening server produces. The in-process test server was at fault, not the probe. It
   now runs in its own process, and the warning filters added along the way were removed, so an unclosed
   socket in the test process fails a test and can only be the probe's. A soak test also asserts that
-  no probe socket stays open after 100 mid-exchange hang-ups.
+  no probe socket stays open after 100 probes, 75 of which end mid-exchange (body cap, TLS failure,
+  timeout).
 
 ## Known limitations
 
