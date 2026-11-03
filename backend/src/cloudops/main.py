@@ -11,14 +11,30 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from cloudops import __version__
-from cloudops.api import applications, auth, health, system
+from cloudops.api import (
+    applications,
+    auth,
+    deployments,
+    events,
+    health,
+    ingest,
+    logs,
+    overview,
+    system,
+)
 from cloudops.auth import FailedSignInLimiter
 from cloudops.config import ConfigurationError, Settings, check_settings
 from cloudops.db.migrate import upgrade_to_head
 from cloudops.db.session import create_db_engine, create_session_factory
+from cloudops.deployments.sync import DeploymentSync
 from cloudops.errors import register_error_handlers
+from cloudops.ingest.logs import MAX_BODY_BYTES, IngestRateLimiter
 from cloudops.logging_setup import configure_logging
-from cloudops.middleware import HostAndOriginGuardMiddleware, RequestContextMiddleware
+from cloudops.middleware import (
+    BodySizeLimitMiddleware,
+    HostAndOriginGuardMiddleware,
+    RequestContextMiddleware,
+)
 from cloudops.monitoring.runner import CheckRunner
 from cloudops.monitoring.worker import MonitoringWorker
 
@@ -35,8 +51,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = create_db_engine(settings.database_path)
     session_factory = create_session_factory(engine)
     check_runner = CheckRunner(session_factory, settings)
+    deployment_sync = DeploymentSync(session_factory, settings)
     worker = (
-        MonitoringWorker(session_factory, settings, check_runner)
+        MonitoringWorker(session_factory, settings, check_runner, deployment_sync=deployment_sync)
         if settings.worker_enabled
         else None
     )
@@ -85,12 +102,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.check_runner = check_runner
     app.state.worker = worker
     app.state.manual_checks = {}  # application id -> time of the last "check now"
+    app.state.ingest_limiter = IngestRateLimiter(settings.ingest_max_entries_per_minute)
+    app.state.deployment_sync = deployment_sync
+    app.state.manual_syncs = {}  # application id -> time of the last "sync now"
 
     register_error_handlers(app)
     # RequestContextMiddleware is added last so it is outermost: request IDs and security
     # headers also apply to responses produced by the guard.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        path="/api/ingest/logs",
+        max_bytes=MAX_BODY_BYTES,
+        message=f"A log batch can be at most {MAX_BODY_BYTES // 1024} KiB. Send smaller batches.",
+    )
     app.add_middleware(HostAndOriginGuardMiddleware, allowed_hosts=settings.allowed_hosts)
     app.add_middleware(RequestContextMiddleware)
-    for router in (health.router, auth.router, system.router, applications.router):
+    for router in (
+        health.router,
+        auth.router,
+        system.router,
+        applications.router,
+        deployments.router,
+        events.router,
+        logs.router,
+        overview.router,
+        ingest.router,
+    ):
         app.include_router(router, prefix="/api")
     return app

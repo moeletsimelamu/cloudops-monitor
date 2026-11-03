@@ -17,32 +17,26 @@ from cloudops.main import create_app
 from cloudops.monitoring.recorder import record_check
 from tests.conftest import make_settings, operator_headers
 from tests.factories import http, ok
-from tests.servers import ControllableApp, ServerThread
+from tests.servers import ServerProcess
 
 AUTH = operator_headers()
 
 
 @pytest.fixture(scope="module")
-def target() -> Iterator[tuple[ServerThread, ControllableApp]]:
-    controllable = ControllableApp()
-    with ServerThread(controllable.app) as server:
-        yield server, controllable
+def server() -> Iterator[ServerProcess]:
+    with ServerProcess() as running:
+        yield running
 
 
 @pytest.fixture
-def server(target: tuple[ServerThread, ControllableApp]) -> ServerThread:
-    return target[0]
+def health(server: ServerProcess) -> Iterator[ServerProcess]:
+    """For tests that switch the target's health; put back afterwards."""
+    yield server
+    server.set_health()
 
 
 @pytest.fixture
-def health(target: tuple[ServerThread, ControllableApp]) -> Iterator[ControllableApp]:
-    controllable = target[1]
-    yield controllable
-    controllable.health_status, controllable.health_body = 200, {"status": "pass"}
-
-
-@pytest.fixture
-def app(tmp_path: Path, server: ServerThread) -> FastAPI:
+def app(tmp_path: Path, server: ServerProcess) -> FastAPI:
     settings = make_settings(
         tmp_path / "data", allowed_targets=[f"127.0.0.1:{server.port}", "localhost:8310"]
     )
@@ -55,7 +49,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
         yield test_client
 
 
-def _body(server: ServerThread, **overrides: Any) -> dict[str, Any]:
+def _body(server: ServerProcess, **overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "slug": "orders-api",
         "name": "Orders API",
@@ -74,7 +68,7 @@ def _events(app: FastAPI) -> list[OperationalEvent]:
         return list(db.scalars(select(OperationalEvent).order_by(OperationalEvent.id)))
 
 
-def _register(client: TestClient, server: ServerThread, **overrides: Any) -> dict[str, Any]:
+def _register(client: TestClient, server: ServerProcess, **overrides: Any) -> dict[str, Any]:
     response = client.post("/api/applications", json=_body(server, **overrides))
     assert response.status_code == 201, response.text
     return dict(response.json())
@@ -98,7 +92,7 @@ def test_every_route_requires_the_operator(app: FastAPI) -> None:
             assert anonymous.request(method, path).status_code == 401, (method, path)
 
 
-def test_register_list_and_get(client: TestClient, server: ServerThread, app: FastAPI) -> None:
+def test_register_list_and_get(client: TestClient, server: ServerProcess, app: FastAPI) -> None:
     created = _register(client, server)
     assert created["slug"] == "orders-api"
     assert created["status"] == "pending"
@@ -120,7 +114,7 @@ def test_unknown_application_is_404(client: TestClient) -> None:
     assert response.json()["error"]["message"] == "There is no application 'nope'."
 
 
-def test_duplicate_slug_is_a_conflict(client: TestClient, server: ServerThread) -> None:
+def test_duplicate_slug_is_a_conflict(client: TestClient, server: ServerProcess) -> None:
     _register(client, server)
     response = client.post("/api/applications", json=_body(server))
     assert response.status_code == 409
@@ -147,7 +141,7 @@ def test_duplicate_slug_is_a_conflict(client: TestClient, server: ServerThread) 
     ],
 )
 def test_invalid_registrations_are_rejected(
-    client: TestClient, server: ServerThread, overrides: dict[str, Any], fragment: str
+    client: TestClient, server: ServerProcess, overrides: dict[str, Any], fragment: str
 ) -> None:
     response = client.post("/api/applications", json=_body(server, **overrides))
     assert response.status_code == 422
@@ -164,7 +158,7 @@ def test_invalid_registrations_are_rejected(
     ],
 )
 def test_targets_outside_the_policy_are_rejected(
-    client: TestClient, server: ServerThread, url: str, fragment: str
+    client: TestClient, server: ServerProcess, url: str, fragment: str
 ) -> None:
     response = client.post("/api/applications", json=_body(server, check_url=url))
     assert response.status_code == 422
@@ -199,7 +193,7 @@ def test_public_mode_checks_where_the_name_points(
 
 
 def test_update_changes_fields_and_records_which(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     response = client.patch(
@@ -218,7 +212,7 @@ def test_update_changes_fields_and_records_which(
 
 
 def test_update_is_validated_against_the_stored_settings(
-    client: TestClient, server: ServerThread
+    client: TestClient, server: ServerProcess
 ) -> None:
     _register(client, server, interval_seconds=60, timeout_seconds=20)
     response = client.patch("/api/applications/orders-api", json={"interval_seconds": 15})
@@ -228,7 +222,7 @@ def test_update_is_validated_against_the_stored_settings(
 
 
 def test_update_cannot_move_the_target_outside_the_policy(
-    client: TestClient, server: ServerThread
+    client: TestClient, server: ServerProcess
 ) -> None:
     _register(client, server)
     response = client.patch(
@@ -238,13 +232,13 @@ def test_update_cannot_move_the_target_outside_the_policy(
     assert client.get("/api/applications/orders-api").json()["check_url"] == server.url("/health")
 
 
-def test_slug_cannot_change(client: TestClient, server: ServerThread) -> None:
+def test_slug_cannot_change(client: TestClient, server: ServerProcess) -> None:
     _register(client, server)
     response = client.patch("/api/applications/orders-api", json={"slug": "other"})
     assert response.status_code == 422
 
 
-def test_pause_and_resume(client: TestClient, server: ServerThread, app: FastAPI) -> None:
+def test_pause_and_resume(client: TestClient, server: ServerProcess, app: FastAPI) -> None:
     _register(client, server)
     paused = client.post("/api/applications/orders-api/pause").json()
     assert paused["status"] == "paused"
@@ -261,7 +255,7 @@ def test_pause_and_resume(client: TestClient, server: ServerThread, app: FastAPI
 
 
 def test_delete_removes_the_application_but_keeps_an_audit_event(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     assert client.delete("/api/applications/orders-api").status_code == 204
@@ -276,7 +270,7 @@ def test_delete_removes_the_application_but_keeps_an_audit_event(
 
 
 def test_check_now_records_a_real_check(
-    client: TestClient, server: ServerThread, health: ControllableApp
+    client: TestClient, server: ServerProcess, health: ServerProcess
 ) -> None:
     _register(client, server)
     response = client.post("/api/applications/orders-api/checks")
@@ -295,11 +289,11 @@ def test_check_now_records_a_real_check(
 
 
 def test_check_now_detects_a_failure_and_opens_an_incident(
-    client: TestClient, server: ServerThread, health: ControllableApp, app: FastAPI
+    client: TestClient, server: ServerProcess, health: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     client.post("/api/applications/orders-api/checks")
-    health.health_status = 500
+    health.set_health(500)
     for _ in range(2):
         app.state.manual_checks.clear()  # skip the 5-second "check now" spacing in tests
         result = client.post("/api/applications/orders-api/checks").json()
@@ -317,7 +311,7 @@ def test_check_now_for_an_unknown_application(client: TestClient) -> None:
 
 
 def test_check_now_while_a_check_runs_is_a_conflict(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     created = _register(client, server)
     app.state.check_runner.in_flight.add(created["id"])
@@ -342,7 +336,7 @@ def _seed_checks(app: FastAPI, signals: str, *, every: timedelta, end: datetime)
 
 
 def test_checks_are_paged_newest_first_and_filterable(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     _seed_checks(app, "oooww", every=timedelta(minutes=1), end=utc_now())
@@ -376,7 +370,7 @@ def test_checks_are_paged_newest_first_and_filterable(
     ],
 )
 def test_history_parameters_are_validated(
-    client: TestClient, server: ServerThread, params: dict[str, Any], code: str
+    client: TestClient, server: ServerProcess, params: dict[str, Any], code: str
 ) -> None:
     _register(client, server)
     response = client.get("/api/applications/orders-api/checks", params=params)
@@ -384,7 +378,7 @@ def test_history_parameters_are_validated(
     assert response.json()["error"]["code"] == code
 
 
-def test_time_range_filters_checks(client: TestClient, server: ServerThread, app: FastAPI) -> None:
+def test_time_range_filters_checks(client: TestClient, server: ServerProcess, app: FastAPI) -> None:
     _register(client, server)
     end = utc_now()
     _seed_checks(app, "o" * 10, every=timedelta(hours=1), end=end)
@@ -397,7 +391,7 @@ def test_time_range_filters_checks(client: TestClient, server: ServerThread, app
 
 
 def test_metrics_report_availability_coverage_and_latency(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server, interval_seconds=60)
     with session_scope(app.state.session_factory) as db:
@@ -419,7 +413,7 @@ def test_metrics_report_availability_coverage_and_latency(
 
 
 def test_metrics_say_when_there_is_too_little_data(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     _seed_checks(app, "ooo", every=timedelta(minutes=1), end=utc_now())
@@ -429,14 +423,14 @@ def test_metrics_say_when_there_is_too_little_data(
     assert body["availability"]["insufficient_reason"] == "Fewer than 10 checks in this window"
 
 
-def test_metrics_window_is_validated(client: TestClient, server: ServerThread) -> None:
+def test_metrics_window_is_validated(client: TestClient, server: ServerProcess) -> None:
     _register(client, server)
     response = client.get("/api/applications/orders-api/metrics", params={"window": "1y"})
     assert response.status_code == 422
 
 
 def test_incidents_are_listed_newest_first(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     _seed_checks(app, "ooww" + "oo" + "ff", every=timedelta(minutes=1), end=utc_now())
@@ -448,7 +442,7 @@ def test_incidents_are_listed_newest_first(
 
 
 def test_an_old_observation_is_shown_as_stale(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server, interval_seconds=60)
     _seed_checks(app, "oo", every=timedelta(minutes=1), end=utc_now() - timedelta(minutes=10))
@@ -459,7 +453,7 @@ def test_an_old_observation_is_shown_as_stale(
 
 
 def test_system_status_reports_worker_and_database(
-    client: TestClient, server: ServerThread, app: FastAPI
+    client: TestClient, server: ServerProcess, app: FastAPI
 ) -> None:
     _register(client, server)
     _seed_checks(app, "ww", every=timedelta(minutes=1), end=utc_now())

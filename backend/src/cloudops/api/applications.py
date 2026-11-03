@@ -22,17 +22,28 @@ from cloudops.api.application_schemas import (
     CheckOut,
     CheckPage,
     IncidentList,
+    IngestKeyOut,
     MetricsOut,
     MonitoringSettings,
+    RequestMetricsOut,
 )
 from cloudops.api.deps import OperatorDep, SessionDep
 from cloudops.api.params import Before, Limit, TimeRange, time_range
-from cloudops.api.views import application_views, check_out, incident_out, metrics
-from cloudops.db.models import Application, HealthCheck, Incident
+from cloudops.api.views import (
+    application_views,
+    check_out,
+    incident_views,
+    metrics,
+    request_metrics,
+)
+from cloudops.auth import hash_secret
+from cloudops.db.models import Application, HealthCheck, Incident, SystemState
 from cloudops.db.session import run_db_work, session_scope
 from cloudops.db.types import utc_now
+from cloudops.deployments.sync import sync_state_key
 from cloudops.errors import AppError, ConflictError, NotFoundError
 from cloudops.events import record_event
+from cloudops.ingest.logs import generate_ingest_key
 from cloudops.monitoring.probe import system_resolver
 from cloudops.monitoring.runner import CheckAlreadyRunningError, CheckRunner
 from cloudops.monitoring.target_policy import TargetPolicy, TargetPolicyError
@@ -208,6 +219,9 @@ def _first_message(error: ValueError) -> str:
 def delete_application(slug: str, db: SessionDep) -> Response:
     app = _get(db, slug)
     name, removed_slug = app.name, app.slug
+    sync_state = db.get(SystemState, sync_state_key(app.id))
+    if sync_state is not None:
+        db.delete(sync_state)
     db.delete(app)
     db.flush()
     record_event(
@@ -249,6 +263,45 @@ def pause_monitoring(slug: str, db: SessionDep) -> ApplicationOut:
 @router.post("/{slug}/resume", response_model=ApplicationOut)
 def resume_monitoring(slug: str, db: SessionDep) -> ApplicationOut:
     return _set_monitoring(db, slug, enabled=True)
+
+
+@router.post("/{slug}/ingest-key", response_model=IngestKeyOut, status_code=HTTPStatus.CREATED)
+def create_ingest_key(slug: str, db: SessionDep) -> IngestKeyOut:
+    """Create or replace the key this application ships logs with. Shown once; any previous key
+    stops working immediately."""
+    app = _get(db, slug)
+    rotated = app.ingest_key_hash is not None
+    key = generate_ingest_key()
+    now = utc_now()
+    app.ingest_key_hash = hash_secret(key)
+    app.updated_at = now
+    record_event(
+        db,
+        type="monitoring.ingest_key_rotated" if rotated else "monitoring.ingest_key_created",
+        severity="info",
+        summary=f"{app.name}: log ingest key {'rotated' if rotated else 'created'}",
+        occurred_at=now,
+        application_id=app.id,
+    )
+    return IngestKeyOut(ingest_key=key, application_slug=app.slug)
+
+
+@router.delete("/{slug}/ingest-key", status_code=HTTPStatus.NO_CONTENT)
+def revoke_ingest_key(slug: str, db: SessionDep) -> Response:
+    app = _get(db, slug)
+    if app.ingest_key_hash is not None:
+        now = utc_now()
+        app.ingest_key_hash = None
+        app.updated_at = now
+        record_event(
+            db,
+            type="monitoring.ingest_key_revoked",
+            severity="info",
+            summary=f"{app.name}: log ingest key revoked",
+            occurred_at=now,
+            application_id=app.id,
+        )
+    return Response(status_code=HTTPStatus.NO_CONTENT)
 
 
 # --- checks and history -----------------------------------------------------------------------
@@ -334,7 +387,7 @@ def list_incidents(slug: str, db: SessionDep, limit: Limit = 20) -> IncidentList
         .order_by(Incident.opened_at.desc(), Incident.id.desc())
         .limit(limit)
     ).all()
-    return IncidentList(items=[incident_out(i) for i in rows])
+    return IncidentList(items=incident_views(db, rows))
 
 
 @router.get("/{slug}/metrics", response_model=MetricsOut)
@@ -345,3 +398,13 @@ def application_metrics(
 ) -> MetricsOut:
     """Availability, coverage and response times over a window ending now."""
     return metrics(db, _get(db, slug), window, utc_now())
+
+
+@router.get("/{slug}/request-metrics", response_model=RequestMetricsOut)
+def application_request_metrics(
+    slug: str,
+    db: SessionDep,
+    window: Annotated[Literal["1h", "6h", "24h", "7d"], Query()] = "24h",
+) -> RequestMetricsOut:
+    """Requests and 5xx responses from the application's own request logs, if it ships them."""
+    return request_metrics(db, _get(db, slug), window, utc_now())

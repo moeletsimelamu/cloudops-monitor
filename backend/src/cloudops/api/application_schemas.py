@@ -114,6 +114,19 @@ class CheckOut(BaseModel):
     state_after: str
 
 
+class PrecedingDeploymentOut(BaseModel):
+    """A deployment close before an incident. Timing only: it does not establish a cause."""
+
+    id: int
+    run_number: int | None
+    commit_sha: str
+    outcome: str
+    url: str | None
+    relation: Literal["in_progress", "completed_before"]
+    minutes_before: int
+    summary: str
+
+
 class IncidentOut(BaseModel):
     id: int
     opened_at: datetime
@@ -121,6 +134,7 @@ class IncidentOut(BaseModel):
     worst_state: Literal["degraded", "unavailable"]
     opening_reason: str | None
     duration_seconds: int | None  # None while open
+    preceding_deployment: PrecedingDeploymentOut | None = None
 
 
 class ApplicationOut(BaseModel):
@@ -201,3 +215,26 @@ class MetricsOut(BaseModel):
     p95_ms: int | None
     buckets: list[BucketOut]
     definitions: dict[str, str]
+
+
+class IngestKeyOut(BaseModel):
+    ingest_key: str = Field(description="Shown once. Only a hash is stored; rotate it if lost.")
+    application_slug: str
+
+
+class RequestBucketOut(BaseModel):
+    start: datetime
+    requests: int
+    errors: int  # responses with a 5xx status
+
+
+class RequestMetricsOut(BaseModel):
+    window: str
+    window_start: datetime
+    window_end: datetime
+    bucket_seconds: int
+    has_data: bool
+    requests: int
+    errors: int
+    buckets: list[RequestBucketOut]
+    source: str

@@ -4,8 +4,9 @@
 > authentication (§4: sessions, constant-time token check, sign-in rate limit, Origin and Host
 > guard), secrets handling (§5: blank and placeholder tokens refused, `set`/`not set` display,
 > redaction of CloudOps's own logs), the error envelope (§8) and security headers (§9). The
-> target policy (§3) followed in Phase 3. Ingest redaction (§7) and container controls are still
-> planned. Phase 8 reviews every item.
+> target policy (§3) followed in Phase 3, and ingest keys, limits and redaction (§7) and the
+> read-only GitHub integration (§5, §6) in Phase 4. Container controls are still planned. Phase 8
+> reviews every item.
 
 ## 1. Deployment assumptions
 

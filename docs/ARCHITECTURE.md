@@ -1,11 +1,9 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phases 2 and 3 complete. Configuration, logging, the error envelope, the schema,
-> liveness and readiness, operator authentication (§7, §8), the application registry, health
-> checks, state, incidents, health history and metrics (§3), and the events those produce (§4)
-> are implemented and tested. Log ingestion, deployment records and the event API (§4–§6) are
-> still design. Differences from the design are recorded in the decision log in
-> [PLAN.md](PLAN.md).
+> **Status:** Phases 2 to 4 complete: the whole backend described here is implemented and tested,
+> including events, log ingestion and queries, deployment records from GitHub Actions, correlation
+> and the overview (§3–§8). The frontend is still design. Differences from the design are recorded
+> in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
 
@@ -207,11 +205,12 @@ This metric is "health-check availability", not "uptime", and the UI uses that w
 | `health.degraded`, `health.unavailable` | warning / critical | state machine (opens incident) |
 | `health.escalated`, `health.improved` | critical / warning | state machine (same incident) |
 | `health.recovered` | info | state machine (closes incident) |
-| `deployment.started`, `deployment.succeeded`, `deployment.failed`, `deployment.cancelled` | info / info / error / warning | deployment sync, when a run is first seen or changes status |
+| `deployment.started`, `deployment.succeeded`, `deployment.failed`, `deployment.cancelled`, `deployment.needs_attention` | info / info / error / warning / warning | deployment sync, when a run is first seen or reaches an outcome. `occurred_at` is when it happened according to GitHub, not when CloudOps noticed. A run first seen already finished gets only its outcome event. |
 | `monitoring.configured`, `monitoring.paused`, `monitoring.resumed`, `application.registered`, `application.removed` | info | API, when a change is saved; the event lists the changed fields, never secret values |
+| `monitoring.ingest_key_created`, `monitoring.ingest_key_rotated`, `monitoring.ingest_key_revoked` | info | API; the key itself never appears in an event |
 | `monitoring.target_blocked` | warning | probe |
 | `monitoring.worker_started` | info / warning | worker start-up; records the gap since the last heartbeat ("monitoring resumed after a 37 min gap") |
-| `deployments.sync_failed` | warning | sync job; only when the previous sync succeeded, so the event is not repeated |
+| `deployments.sync_failed`, `deployments.sync_recovered` | warning / info | sync job; only when it starts failing and when it works again, so a failure that lasts is not repeated |
 
 Each event has: `occurred_at` (UTC), `type`, `severity`, `application_id` (nullable for system
 events), `incident_id` (nullable), `deployment_id` (nullable), `summary` (one human-readable
@@ -239,14 +238,19 @@ Authorization: Bearer cok_<ingest key for one application>
   hashes.
 - Limits: at most 500 entries and 256 KiB per request; message at most 4 KiB; at most 32 flat
   attributes with scalar values; timestamps within the last 24 h and no more than 5 min in the
-  future. Invalid entries are rejected with a per-entry error. The rest of the batch is stored.
+  future. Invalid entries are rejected with a per-entry error, which never repeats the input. The
+  rest of the batch is stored. Each application may also send at most
+  `CLOUDOPS_INGEST_MAX_ENTRIES_PER_MINUTE` entries (default 6,000): retention runs hourly, so this
+  is what bounds growth between runs.
 - **Redaction before storage.** Attribute keys that look sensitive (`password`, `secret`, `token`,
   `authorization`, `cookie`, `api_key`, `session`, …) have their values replaced by `[REDACTED]`.
   Values that look like credentials (bearer tokens, JWTs, GitHub `ghp_`/`github_pat_` tokens, AWS
   access key IDs, `cok_` ingest keys) are masked wherever they appear in messages or attributes.
   Redaction reduces the risk but is not a guarantee, and [SECURITY.md](SECURITY.md) says so.
-- The sandbox service includes a ~60-line Python `logging.Handler` that batches and ships records.
-  Any Python application can copy it as an example.
+- The sandbox service includes a small Python `logging.Handler` (`log_shipper.py`, standard library
+  only) that batches and ships records from a background thread. If CloudOps is unreachable it
+  drops and counts batches rather than slowing the application down. Any Python application can
+  copy it.
 
 CloudOps Monitor's **own** logs are JSON lines on stdout, which is the right place for container
 logs. They are not written into its own log store in the first release.
@@ -254,15 +258,19 @@ logs. They are not written into its own log store in the first release.
 ### 5.2 Request metrics from logs
 
 When an application ships one `http.request` entry per request with a numeric `status_code`
-attribute, CloudOps counts requests and 5xx responses per time bucket. This produces the "failed
-requests increased" signal from the product scenario without a separate metrics pipeline. The UI
-labels the chart "from ingested request logs" and hides it for applications that don't ship them.
+attribute, CloudOps counts requests and 5xx responses per time bucket
+(`GET /api/applications/{slug}/request-metrics`). This produces the "failed requests increased"
+signal from the product scenario without a separate metrics pipeline. Counting happens in SQL,
+because an application can ship far more log entries than it has health checks. The response says
+where the numbers come from and reports `has_data: false` for applications that don't ship them,
+so the UI can hide the chart rather than draw a flat line.
 
 ### 5.3 Querying
 
 Filters: application, minimum severity, time range (max 7 days per query), event name, correlation
-ID and free text (SQLite `LIKE` on the message; FTS5 if it proves necessary). Results use keyset
-pagination on `(timestamp, id)`, newest first. A **±10 minutes around this** action on a check,
+ID and free text (SQLite `LIKE` on the message, with `%` and `_` treated literally; FTS5 if it
+proves necessary). Results use keyset pagination on `(timestamp, id)`, newest first, because entries
+can arrive late and IDs do not follow time order. A **±10 minutes around this** action on a check,
 event or deployment opens the log explorer pre-filtered to that application and time.
 
 ## 6. Deployment records
@@ -286,8 +294,15 @@ GET https://api.github.com/repos/{owner}/{repo}/actions/workflows/{file}/runs?br
   (GitHub allows 60 requests per hour per IP). For private repositories, or more headroom, use a
   **fine-grained personal access token** limited to the selected repositories, with only
   *Actions: read* and *Metadata: read*. The token cannot trigger or modify anything.
-- Records are upserted on `(source, external_id = run id, attempt)`, so syncing is idempotent and
-  re-runs appear as separate attempts.
+- Records are upserted on `(application, source, external_id = run id, attempt)`, so syncing is
+  idempotent, re-runs appear as separate attempts, and two applications can share a workflow.
+- The client does not follow redirects or read proxy settings from the environment, so the token only
+  goes to the configured API host. Links from GitHub are stored only if they use `https://`.
+- When GitHub reports the rate limit is used up, CloudOps stops asking until the stated reset time.
+  The worker's next scheduled sync after that picks up where it left off.
+- `GET /api/deployments/sources` shows each source, its last success and last error, and the rate
+  limit remaining. `POST /api/applications/{slug}/deployments/sync` is "sync now", spaced 10 s apart
+  per application. It only reads from GitHub.
 
 Status mapping:
 
@@ -298,7 +313,7 @@ Status mapping:
 | `completed` + `success` | succeeded |
 | `completed` + `failure`, `timed_out`, `startup_failure` | failed |
 | `completed` + `cancelled`, `skipped` | cancelled |
-| `completed` + `action_required`, `neutral`, `stale` | needs attention |
+| `completed` + `action_required`, `neutral`, `stale`, or anything new | needs attention |
 
 Each record stores: application, environment (the application's environment), commit SHA, branch,
 triggering event, actor, run number and attempt, title, `started_at` (`run_started_at`),
@@ -318,9 +333,13 @@ authentication with a separately scoped token. See [SECURITY.md](SECURITY.md).
 
 ### 6.3 Correlation
 
-On an application's page, when an incident opened within 60 minutes after a deployment completed,
-the page shows a note such as "Incident opened 4 min after deploy #57 (`a1b2c3d`) completed". The
-wording reports timing only and makes no claim about cause.
+Every incident the API returns carries `preceding_deployment` when a deployment of that same
+application was running as the incident opened, or otherwise finished within the 60 minutes before
+it. A running deployment takes priority; otherwise the latest to finish is used. A run that started
+more than 60 minutes earlier and was never seen to finish is ignored, because that is more likely a
+missed update than a live deployment. The summary reads, for example, "Incident opened 4 min after
+deployment #57 (`a1b2c3d`) finished (succeeded)". The wording reports timing only and makes no claim
+about cause.
 
 ## 7. Configuration, auth and system status
 
@@ -337,7 +356,7 @@ wording reports timing only and makes no claim about cause.
 Liveness answers "should this container be restarted?". Readiness answers "should traffic or trust
 be given to it?". A monitor whose worker has died is alive but not ready.
 
-### 7.2 Application API (implemented in Phase 3)
+### 7.2 Application API
 
 All routes need the operator. Errors use the envelope from §7.
 
@@ -352,6 +371,14 @@ All routes need the operator. Errors use the envelope from §7.
 | `GET /api/applications/{slug}/incidents` | Incidents, newest first, with durations. |
 | `GET /api/applications/{slug}/metrics?window=1h\|6h\|24h\|7d` | Availability, coverage, p50/p95, buckets, and the definitions shown next to them in the UI. |
 | `GET /api/system/status` | Worker (running, last tick, loop lag, failures, in-flight checks, last retention), database size and counts, configuration warnings. |
+| `POST/DELETE /api/applications/{slug}/ingest-key` | Create or rotate (shown once), or revoke, the key this application ships logs with. |
+| `GET /api/applications/{slug}/request-metrics?window=` | Requests and 5xx responses per bucket, from the application's own request logs (§5.2). |
+| `POST /api/ingest/logs` | Log entries from an application. Uses its ingest key, not the operator. |
+| `GET /api/logs?application&min_severity&event&correlation_id&q&from&to&limit&cursor` | Log explorer (§5.3). |
+| `GET /api/events?application&category&type&min_severity&from&to&limit&cursor` | Event timeline, newest first. |
+| `GET /api/incidents?status&application&limit&cursor` | Incidents across applications, with the preceding deployment. |
+| `GET /api/deployments?application&outcome&branch&from&to&limit&cursor` | Deployment history (§6). |
+| `GET /api/overview` | Status counts, what needs attention (worst first), each application's 24 h availability, p95 and latest deployment, incidents closed in the last 24 h, recent deployments and changes. Recomputed per request from one query per kind of record. |
 
 ### 7.3 Operator authentication
 

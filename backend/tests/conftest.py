@@ -1,3 +1,4 @@
+import gc
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -41,3 +42,11 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 def operator_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {OPERATOR_TOKEN}"}
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage() -> Iterator[None]:
+    """Collect after every test, so a leaked socket or connection fails the test that leaked it
+    rather than whichever test happens to be running when the garbage collector next wakes up."""
+    yield
+    gc.collect()

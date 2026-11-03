@@ -210,6 +210,8 @@ class LogEntry(Base):
     __tablename__ = "log_entries"
     __table_args__ = (
         Index("ix_log_entries_application_timestamp", "application_id", "timestamp"),
+        # Request metrics: one application's http.request entries over a time window.
+        Index("ix_log_entries_application_event_timestamp", "application_id", "event", "timestamp"),
         Index("ix_log_entries_timestamp", "timestamp"),
         Index("ix_log_entries_correlation_id", "correlation_id"),
     )

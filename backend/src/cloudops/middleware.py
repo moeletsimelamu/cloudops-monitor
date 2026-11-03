@@ -9,6 +9,7 @@ from http import HTTPStatus
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -129,6 +130,49 @@ class RequestContextMiddleware:
         finally:
             log_access()  # if the response never completed (e.g. the client disconnected)
             request_id_var.reset(token)
+
+
+class BodySizeLimitMiddleware:
+    """Refuses oversized request bodies on one path while they are being received.
+
+    ``Content-Length`` is checked first; the body is also counted as it arrives, because the
+    header can be missing (chunked encoding) or wrong.
+    """
+
+    def __init__(self, app: ASGIApp, *, path: str, max_bytes: int, message: str) -> None:
+        self.app = app
+        self.path = path
+        self.max_bytes = max_bytes
+        self.message = message
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] != self.path:
+            await self.app(scope, receive, send)
+            return
+
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > self.max_bytes:
+            response = error_response(
+                Request(scope),
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                "payload_too_large",
+                self.message,
+            )
+            await response(scope, receive, send)
+            return
+
+        received = 0
+
+        async def counting_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise HTTPException(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, self.message)
+            return message
+
+        await self.app(scope, counting_receive, send)
 
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})

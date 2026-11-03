@@ -10,7 +10,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 1 | Discovery and architecture | Done — approved 2026-10-27 |
 | 2 | Backend foundation | Done — 95 tests, ruff and mypy clean |
 | 3 | Application registry and monitoring | Done — 333 backend + 8 sandbox tests; live run against the sandbox |
-| 4 | Events, logs and deployment records | Not started |
+| 4 | Events, logs and deployment records | Done — 488 backend + 17 sandbox tests; live run including a real GitHub sync |
 | 5 | Frontend and product design | Not started |
 | 6 | CI/CD and packaging | Not started |
 | 7 | Integration and operational hardening | Not started |
@@ -285,3 +285,12 @@ names only), verification of every claim, final report.
 | D24 | One blocked address among several blocks the check | Conservative: a name that points anywhere forbidden is suspect even if another address is fine. |
 | D25 | "Check now" shares the scheduler's in-flight set (409 while running) and is spaced 5 s per application (429) | One check at a time per application keeps the state machine's ordering correct; spacing stops the button being used as a load generator. |
 | D26 | The sandbox is a separate small package (`sandbox/`) with the same pinned FastAPI/uvicorn | It is a test target, not part of the product; keeping it separate keeps the product image free of it. |
+| D27 | Database work on the event loop goes through `run_db_work`, which finishes the work before delivering cancellation | anyio's shielding does not cover native `task.cancel()`: `stop()` could return while a thread was writing, and the engine was disposed under it. |
+| D28 | Logs, events and deployments page by an opaque (time, ID) cursor | Late log entries and backfilled runs mean IDs do not follow time order, so an ID cursor would skip or repeat rows. |
+| D29 | Ingest is limited per request (256 KiB, 500 entries) and per application per minute | Retention is hourly; without a rate limit, one noisy sender could fill the disk in between. |
+| D30 | Rejection messages for log entries never repeat the input | A rejected entry may be exactly the secret that should not be stored or echoed. |
+| D31 | The GitHub client follows no redirects and ignores environment proxies | The token must only reach the configured API host. |
+| D32 | A run first seen already finished records only its outcome event, at GitHub's time | Backfilled runs stay accurate on the timeline without inventing a "started" event seen at the wrong moment. |
+| D33 | Correlation prefers a deployment running at the time, else the latest to finish within 60 min, and says "after", never "caused by" | Timing is evidence; it is not a diagnosis. |
+| D34 | The test HTTP server runs in its own process | In-process, its sockets were collected at random and looked like leaks in unrelated tests. Apart, the warning filters could be removed, so any unclosed socket in the test process now fails a test and is the probe's own. |
+| D35 | A garbage collection runs after every test | A leak then fails the test that caused it, rather than whichever test is running when the collector next wakes. |

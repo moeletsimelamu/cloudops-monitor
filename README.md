@@ -5,11 +5,11 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 3 of 10.** The backend registers applications, checks their health on a
-> schedule, tracks state and incidents, and serves health history and metrics. It is tested
-> against a controllable sandbox service. Deployments, logs and the web interface are not built
-> yet. Features are listed as they are implemented and verified. Progress is tracked in
-> [docs/PLAN.md](docs/PLAN.md).
+> **Project status: Phase 4 of 10.** The backend is complete: it checks application health on a
+> schedule, tracks state and incidents, records events, ingests and searches structured logs, reads
+> deployment history from GitHub Actions, and serves an overview. It is tested against a controllable
+> sandbox service. The web interface, Docker packaging and CI are not built yet. Features are listed
+> as they are implemented and verified. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
 [OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
@@ -132,6 +132,27 @@ Invoke-RestMethod -Method Put http://localhost:8310/control/mode -ContentType ap
 Within two checks the application turns **degraded**, an incident opens and an event is recorded.
 Switch back with `{"mode":"healthy"}` to see it recover. The sandbox's modes are `healthy`,
 `degraded`, `errors`, `slow`, `unavailable` and `flaky`.
+
+To see logs and failing requests as well, create an ingest key for the application and restart the
+sandbox with it. `SANDBOX_TRAFFIC_RPS` makes it call its own API, so there are requests to observe;
+those requests are real but generated, and are logged with `synthetic=true`:
+
+```powershell
+$key = (Invoke-RestMethod -Method Post http://localhost:8300/api/applications/sandbox-orders/ingest-key -Headers $h).ingest_key
+$env:SANDBOX_CLOUDOPS_URL = "http://localhost:8300"
+$env:SANDBOX_INGEST_KEY = $key
+$env:SANDBOX_TRAFFIC_RPS = "2"
+.venv\Scripts\python -m cloudops_sandbox
+```
+
+Then look at `GET /api/overview`, `GET /api/logs?min_severity=error`,
+`GET /api/applications/sandbox-orders/request-metrics?window=1h` and `GET /api/events`.
+
+To record deployments, set `github_repo` and `deploy_workflow` on an application. CloudOps reads that
+workflow's runs from GitHub every 5 minutes. Public repositories need no token, but share GitHub's
+limit of 60 requests an hour per IP address, so a network with other GitHub API traffic can use it
+up. A fine-grained token with *Actions: read* (`CLOUDOPS_GITHUB_TOKEN`) avoids that. CloudOps only
+ever reads from GitHub: it cannot start a deployment.
 
 Docker, frontend, CI/CD and deployment instructions will be added as each part is built and
 verified.

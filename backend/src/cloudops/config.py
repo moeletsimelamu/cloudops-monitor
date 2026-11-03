@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     event_retention_days: int = Field(default=90, ge=1, le=3650)
     log_retention_days: int = Field(default=7, ge=1, le=90)
     log_max_rows: int = Field(default=200_000, ge=1_000, le=10_000_000)
+    # Per application. Retention runs hourly, so this is what bounds growth between runs.
+    ingest_max_entries_per_minute: int = Field(default=6_000, ge=100, le=1_000_000)
 
     # Operations
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

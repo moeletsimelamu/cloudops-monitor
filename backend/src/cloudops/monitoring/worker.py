@@ -21,6 +21,7 @@ from cloudops.config import Settings
 from cloudops.db.models import Application, SystemState
 from cloudops.db.session import run_db_work, session_scope
 from cloudops.db.types import utc_now
+from cloudops.deployments.sync import DeploymentSync
 from cloudops.events import humanize_duration, record_event
 from cloudops.monitoring.retention import RetentionResult, run_retention
 from cloudops.monitoring.runner import CheckAlreadyRunningError, CheckRunner
@@ -50,6 +51,7 @@ class MonitoringWorker:
         heartbeat_seconds: float = 5.0,
         retention_interval: timedelta = timedelta(hours=1),
         rng: random.Random | None = None,
+        deployment_sync: DeploymentSync | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings
@@ -59,6 +61,8 @@ class MonitoringWorker:
         self.heartbeat_seconds = heartbeat_seconds
         self.retention_interval = retention_interval
         self.rng = rng or random.Random()  # noqa: S311 - jitter, not security
+        self.deployment_sync = deployment_sync
+        self._sync_task: asyncio.Task[object] | None = None
         self.started_at: datetime | None = None
         self.last_tick_at: datetime | None = None
         self.loop_lag_ms: float = 0.0
@@ -99,6 +103,7 @@ class MonitoringWorker:
 
     async def _run(self) -> None:
         next_retention = 0.0
+        next_sync = 0.0
         while True:
             tick_started = time.monotonic()
             try:
@@ -106,6 +111,9 @@ class MonitoringWorker:
                 if time.monotonic() >= next_retention:
                     next_retention = time.monotonic() + self.retention_interval.total_seconds()
                     await self.retention()
+                if time.monotonic() >= next_sync:
+                    next_sync = time.monotonic() + self.settings.github_sync_seconds
+                    self.start_deployment_sync()
                 self.consecutive_tick_failures = 0
             except asyncio.CancelledError:
                 raise
@@ -152,6 +160,18 @@ class MonitoringWorker:
             started += 1
         self.last_tick_at = now
         return started
+
+    def start_deployment_sync(self) -> bool:
+        """Start a sync in the background: GitHub being slow must not hold up health checks."""
+        if self.deployment_sync is None:
+            return False
+        if self._sync_task is not None and not self._sync_task.done():
+            return False
+        task: asyncio.Task[object] = asyncio.create_task(self.deployment_sync.sync_all())
+        self._sync_task = task
+        self._checks.add(task)
+        task.add_done_callback(self._check_finished)
+        return True
 
     async def wait_for_checks(self) -> None:
         """Wait until every check started so far has finished (used by tests)."""
