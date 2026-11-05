@@ -1,7 +1,8 @@
 # CloudOps Monitor — Design
 
-> **Status:** Phase 1 design intent. Screens are built in Phase 5. This document is then updated to
-> match what was built and verified in the browser.
+> **Status:** Built in Phase 5. This document describes what exists and was checked in a browser;
+> where the build differs from the Phase 1 intent, it says so and the decision log in
+> [PLAN.md](PLAN.md) gives the reason.
 
 ## 1. Who it is for and what they are doing
 
@@ -45,16 +46,19 @@ only for status.
 | `--surface-1` | `#ffffff` | `#1a1d20` | panels, tables |
 | `--rule` | `#dcdcd6` | `#2c3035` | hairlines, separators |
 | `--ink` | `#16191c` | `#e7e8e6` | primary text |
-| `--ink-muted` | `#5b6168` | `#9aa1a8` | secondary text, labels |
+| `--ink-muted` | `#565c63` | `#a3a9b0` | secondary text, labels |
 | `--accent` | `#1d5fbf` | `#6ea3f0` | links, focus ring, primary buttons, selection |
-| `--ok` | `#1d7a46` | `#4cc283` | healthy |
-| `--warn` | `#9a5b00` | `#e2a43a` | degraded |
-| `--fail` | `#b42318` | `#f0766a` | unavailable, failed deploy |
+| `--ok` | `#0f6b3a` | `#7fe0ad` | healthy |
+| `--warn` | `#bd7a00` | `#f5c45a` | degraded |
+| `--fail` | `#b5261b` | `#e8604f` | unavailable, failed deploy |
 | `--neutral` | `#6b7178` | `#8b9299` | unknown, stale, paused, cancelled |
 
-Every text and icon pair is checked for WCAG AA contrast (4.5:1 for text, 3:1 for glyphs and
-chart marks) in both themes during Phase 5. Values are adjusted if a pair fails. The theme follows
-`prefers-color-scheme` and has a manual override.
+The Phase 1 status colours were too close together for colour-blind readers, so they were replaced
+after running them through a palette validator. The smallest difference between any two statuses
+under simulated colour blindness (OKLab ΔE) is 7.9 in light and 9.6 in dark. The light value is below
+the target of 8, which is acceptable only because status is never colour alone (below). Text wears
+the ink tokens, never a status colour. axe reports no contrast violations on any screen, in either
+theme. The theme follows `prefers-color-scheme` and has a manual override.
 
 ### Status is never colour alone
 
@@ -65,12 +69,12 @@ Each state has a **shape**, a **colour** and a **word**:
 | Healthy | ● filled circle | Healthy |
 | Degraded | ▲ triangle | Degraded |
 | Unavailable | ■ square | Unavailable |
-| Stale | ◌ dashed circle | Stale · 14 min |
+| Stale | ◌ dashed circle | Stale |
 | Pending / unknown | ○ hollow circle | Pending |
 | Paused | ‖ bars | Paused |
 
-Charts use the same shapes as markers, and failure spans use hatching, so they read in greyscale
-and for colour-blind users.
+Charts encode the same thing without colour: incident spans are hatched, and check results and the
+health matrix use height (short ok, medium warning, tall failed), so they read in greyscale.
 
 ### Typography
 
@@ -82,9 +86,9 @@ and for colour-blind users.
 
 ### Shape and space
 
-4 px spacing grid. Corner radius at most 3 px. 1 px rules instead of shadows. Table rows are 32 px
-(compact) or 40 px (comfortable, a per-user setting). Panels are separated by rules and headings,
-not by floating cards.
+Corner radius at most 3 px. 1 px rules instead of shadows. One compact table density; the planned
+"comfortable" setting was not built, because nothing needed it. Panels are bordered sections with a
+heading row, not floating cards.
 
 ## 4. Layout and navigation
 
@@ -93,9 +97,11 @@ A persistent shell:
 - **Left rail** (collapses to icons below 1200 px and to a top bar with a menu below 720 px):
   Overview · Applications · Health · Deployments · Logs · Events · System. Each entry shows a
   status badge where relevant, for example a count of open incidents on Overview.
-- **Top bar**: page title and breadcrumbs, the **global time range** (1 h / 6 h / 24 h / 7 d /
-  custom, stored in the URL query so links are shareable), a UTC/local time toggle, and a "data as
-  of 12:04:31" freshness indicator with auto-refresh status.
+- **Top bar**: page title, the **global time range** (1 h / 6 h / 24 h / 7 d, stored in the URL query
+  so links are shareable, and hidden on pages it does not apply to), a UTC/local time toggle and a
+  theme control. There are no breadcrumbs and no custom range: the log links from other screens
+  ("±10 min") cover the case a custom range was for.
+- Data refreshes every 15 seconds while a page is open. The Overview shows "Data as of 12:04:31".
 - The content area changes layout per task. It is not one template repeated.
 
 ## 5. Screens
@@ -103,34 +109,33 @@ A persistent shell:
 | Screen | Primary question | Layout |
 |---|---|---|
 | **Overview** | What needs attention? | 1) A *Needs attention* list: open incidents and stale applications, ordered by severity and then age, each with state, duration and the deployment that preceded it, if any. 2) A *Fleet* table: every application with displayed status, last check age, 24 h availability, p95 latency and latest deployment. 3) *Recent changes*: a single chronological list merging state transitions and deployments. A one-line count strip (12 apps · 9 healthy · 2 degraded · 1 stale) replaces big summary cards. |
-| **Applications** (registry) | What is monitored and how? | A sortable, filterable table (environment, status, monitoring on/off). Register and edit open as a full page with inline validation and the target policy explained next to the URL field. |
-| **Application detail** | Why is this one unhealthy? | The **troubleshooting workspace**. A header with status, since when, last success and failure, and actions (Check now, Pause, Edit, Open repository). Then the **evidence timeline** (§6). Then tabs: *Checks*, *Events*, *Deployments*, *Logs* and *Configuration*, all scoped to this application and the selected time range. |
-| **Health** (history) | How did everything behave over time? | A matrix: rows are applications, columns are time buckets, and each cell shows the worst signal in that bucket (shape + colour; hatched when there is no data). Availability and coverage appear per row. Clicking a cell opens the application detail at that time. |
-| **Deployments** | What shipped, when, and did it work? | A table filterable by application, outcome and branch: commit SHA, title, actor, duration, outcome and link to the GitHub run. A strip chart of deployments per day for the range. Per application, it shows when the last sync ran. |
-| **Logs** | What did the application say? | A filter bar (application, minimum severity, event, correlation ID, text) above a virtualised list of compact single-line entries. A row expands to show attributes. Clicking a correlation ID filters by it. A "±10 min" action is available from any other screen. |
-| **Events** | What changed in the system? | A vertical timeline grouped by day. Event types are filterable. Incident open and close pairs are linked with their duration. |
-| **System** | Is the monitor itself OK? | Liveness and readiness results, worker heartbeat age and loop lag, last retention run, GitHub sync status and rate limit, database size, the effective non-secret configuration and configuration warnings, plus the target policy and allowlist. |
+| **Applications** (registry) | What is monitored and how? | A sortable table filterable by text, environment and status. Register and edit open as a full page with inline validation and the target policy explained next to the URL field. |
+| **Application detail** | Why is this one unhealthy? | The **troubleshooting workspace**. A header with status, since when, last success and failure, and actions (Check now, Pause, Edit), with the open incident and a link to the GitHub run of any deployment that preceded it. Then the **evidence timeline** (§6). Then tabs: *Checks*, *Events*, *Deployments*, *Logs* and *Configuration*, all scoped to this application and the selected time range. |
+| **Health** (history) | How did everything behave over time? | A matrix: rows are applications, columns are time buckets, and each cell shows the worst signal in that bucket by height and colour, left empty when no check ran. Availability, coverage and p95 appear per row. Clicking a row's cells opens that application, keeping the time range. |
+| **Deployments** | What shipped, when, and did it work? | A table filterable by application, outcome and branch: commit SHA, title, actor, duration, outcome and link to the GitHub run. Newest first at any age, not limited by the time range, because deployments are rare. Below it, each source's last sync and any problem. The planned per-day strip chart was left out: the table already answers the question. |
+| **Logs** | What did the application say? | A filter bar (application, minimum severity, event, correlation ID, text) above a list of compact single-line entries, 100 at a time with "Load older entries" (not virtualised). A row expands to show attributes. Clicking a correlation ID filters by it. A "±10 min" action is available from any other screen. |
+| **Events** | What changed in the system? | A vertical timeline grouped by day. Filterable by application, kind and minimum severity. Each entry links to its application and to its logs ±10 minutes. Recovery events state how long the problem lasted. |
+| **System** | Is the monitor itself OK? | Liveness and readiness results, worker heartbeat age and loop lag, last clean-up, database size and counts, the effective non-secret configuration and configuration warnings, plus the target policy and allowlist. GitHub sync status and rate limit are on Deployments. |
 | **Sign in** | — | A single token field. Says plainly that this is a single-operator token. |
 
 ## 6. Signature component: the evidence timeline
 
 One horizontal time axis on the application detail page that layers, from top to bottom:
 
-1. **State band**: incident spans hatched in the incident's worst state, with healthy periods
-   plain.
-2. **Checks**: response time as a line, with failed checks as shape markers on the axis and gaps
-   where no observation exists (not interpolated).
-3. **Deployments**: vertical markers with the run number. Hovering or focusing a marker shows the
-   commit, outcome and duration.
-4. **Request errors**: 5xx counts per bucket from ingested request logs, shown only when such logs
+1. **Incidents**: spans hatched in the incident's worst state.
+2. **Deployments**: markers with the outcome's shape. Hovering shows the commit, outcome and duration.
+3. **Response time**: p95 as a line, with gaps where no observation exists (never interpolated). If no
+   response was received at all, it says so and draws no scale, rather than an invented one.
+4. **Checks**: the worst result per period, by height and colour.
+5. **Request errors**: 5xx counts per bucket from ingested request logs, shown only when such logs
    exist.
 
-Selecting a point or range filters the tabs below to that time. This is how the product scenario
+Selecting a period filters the tabs below to that time. This is how the product scenario
 works: degradation, a deployment just before it, and error logs, all on one screen.
 
 Charts are hand-written SVG components that share axis and scale helpers. Each chart has a visible
-title, units, a time range, an `aria-label` summary (for example "Response time, 24 h, p95 212 ms,
-3 failed checks"), and a table alternative ("View as table").
+title, units, a time range, an `aria-label` summary, a keyboard readout (arrow keys move between
+periods) and a table alternative ("View as table").
 
 ## 7. States
 
@@ -155,13 +160,16 @@ title, units, a time range, an `aria-label` summary (for example "Response time,
 - Live regions announce check results and status changes on the detail page, rate-limited so they
   don't flood screen readers.
 - `prefers-reduced-motion` disables the few transitions.
-- Verified with axe in Playwright tests and by manual keyboard passes in the browser (Phase 8).
+- Checked in Phase 5 with axe in headless Chromium on 14 routes at 3 widths and in both themes (no
+  violations), and a scripted keyboard-only journey. It has not been tried with a real screen reader;
+  that is for Phase 8.
 
 ## 9. Responsive behaviour
 
 - **≥ 1200 px**: full rail, the detail timeline at full width, tabs below.
-- **720–1199 px**: icon rail. Tables drop low-priority columns (actor, branch) into the expandable
-  row.
-- **< 720 px**: top bar with a menu. Fleet and deployment tables become stacked rows with status,
-  name, age and one key metric. The timeline keeps its time axis and scrolls horizontally inside its
-  own panel, never the page. Filter bars collapse into a "Filters (3)" sheet.
+- **720–1199 px**: icon rail, with each link's name kept for screen readers and shown as a tooltip.
+- **< 720 px**: top bar with a menu. Tables drop low-priority columns; the check list gives each
+  check's detail a line of its own. The timeline shrinks to fit, because the newest data is at the
+  right and must not start off-screen, and shows fewer time labels. Filters wrap rather than
+  collapsing into a sheet. A table that still does not fit scrolls inside its own panel, never the
+  page.

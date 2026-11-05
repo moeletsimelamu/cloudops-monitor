@@ -1,9 +1,9 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phases 2 to 4 complete: the whole backend described here is implemented and tested,
-> including events, log ingestion and queries, deployment records from GitHub Actions, correlation
-> and the overview (§3–§8). The frontend is still design. Differences from the design are recorded
-> in the decision log in [PLAN.md](PLAN.md).
+> **Status:** Phases 2 to 5 complete: the backend described here and the Angular frontend are
+> implemented and tested. Serving the built frontend from the API process comes with packaging in
+> Phase 6; until then it runs from `ng serve` with a proxy to the API. Differences from the design are
+> recorded in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
 
@@ -60,7 +60,14 @@ Why a monolith rather than separate API / worker / ingest services:
 | `db/` | SQLAlchemy 2.x models, engine/session setup (WAL, foreign keys, busy timeout), repositories (query functions), and Alembic migrations. | SQLite |
 | `sandbox/` (separate small package) | A controllable **test target**: a tiny FastAPI service whose health endpoint can be switched between healthy, erroring, slow, unavailable and flaky. It ships its request logs to CloudOps. It is used for local demos, the smoke test and the end-to-end tests. | CloudOps ingest |
 
-The frontend is a separate Angular workspace (`frontend/`) that talks only to the HTTP API.
+The frontend is a separate Angular workspace (`frontend/`) that talks only to the HTTP API. It uses
+standalone components, signals and no zone.js:
+
+| Folder | Holds |
+|---|---|
+| `src/app/core/` | The API client, session handling, polling (`poll`, `pagedPoll`), preferences (theme, time zone, time range in the URL), formatting. |
+| `src/app/shared/` | Status badges, loading/empty/error states, the log, event and deployment lists, and the evidence timeline with its scales. |
+| `src/app/features/` | The screens, each loaded on demand. |
 
 ## 3. Health checks
 
@@ -377,8 +384,9 @@ All routes need the operator. Errors use the envelope from §7.
 | `GET /api/logs?application&min_severity&event&correlation_id&q&from&to&limit&cursor` | Log explorer (§5.3). |
 | `GET /api/events?application&category&type&min_severity&from&to&limit&cursor` | Event timeline, newest first. |
 | `GET /api/incidents?status&application&limit&cursor` | Incidents across applications, with the preceding deployment. |
-| `GET /api/deployments?application&outcome&branch&from&to&limit&cursor` | Deployment history (§6). |
+| `GET /api/deployments?application&outcome&branch&from&to&limit&cursor` | Deployment history (§6), newest first. Unlike other history endpoints, `from` and `to` are optional with no default: deployments are rare, and the last one matters however old it is. |
 | `GET /api/overview` | Status counts, what needs attention (worst first), each application's 24 h availability, p95 and latest deployment, incidents closed in the last 24 h, recent deployments and changes. Recomputed per request from one query per kind of record. |
+| `GET /api/health-matrix?window=` | For each application: availability, coverage and p95 over the window, and the worst check result per bucket. Backs the Health screen. |
 
 ### 7.3 Operator authentication
 

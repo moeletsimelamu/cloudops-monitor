@@ -122,6 +122,14 @@ the check, even if the others are fine.
 `set`/`not set`. A logging filter masks known secret values and credential-shaped strings before
 any log line is written.
 
+### In the browser
+
+The frontend never stores the operator token: it sends it once at sign-in and then relies on the
+HttpOnly session cookie, which scripts cannot read. A new ingest key is held only in memory while it
+is on screen, and is gone after a reload. `localStorage` holds only the theme and time-zone choice.
+The frontend does not insert HTML from data, so logged text and event messages render as text, and it
+follows only `https://` links from event details.
+
 ## 6. Deployment execution
 
 - The application never runs shell commands, whether supplied by users or derived from

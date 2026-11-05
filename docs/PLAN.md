@@ -11,7 +11,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 2 | Backend foundation | Done — 95 tests, ruff and mypy clean |
 | 3 | Application registry and monitoring | Done — 333 backend + 8 sandbox tests; live run against the sandbox |
 | 4 | Events, logs and deployment records | Done — 488 backend + 17 sandbox tests; live run including a real GitHub sync |
-| 5 | Frontend and product design | Not started |
+| 5 | Frontend and product design | Done — 491 backend + 76 frontend tests; every screen checked in headless Chromium against real API data |
 | 6 | CI/CD and packaging | Not started |
 | 7 | Integration and operational hardening | Not started |
 | 8 | Security and quality review | Not started |
@@ -251,7 +251,7 @@ names only), verification of every claim, final report.
 
 | # | Item | Blocks | Needed from you |
 |---|---|---|---|
-| B1 | GitHub repository `moeletsimelamu/cloudops-monitor` (public) does not exist yet; `gh` is not installed | Pushing and CI (Phase 6); real deployment records from this repository's own workflow (the demo in §6) | Create an **empty** public repository on github.com when convenient. Phases 2–5 do not need it. |
+| B1 | Resolved 2026-11-05: `moeletsimelamu/cloudops-monitor` exists. `gh` is not installed, so CI results are read on github.com | — | Nothing. |
 | B2 | Docker is not installed locally | Local `docker compose up` verification | Nothing. The image is verified in CI. Installing Docker Desktop later would allow local verification. |
 | B3 | Cloud hosting choice | Phase 9 Option B only | A decision at Phase 9, after a price check. |
 
@@ -294,3 +294,10 @@ names only), verification of every claim, final report.
 | D33 | Correlation prefers a deployment running at the time, else the latest to finish within 60 min, and says "after", never "caused by" | Timing is evidence; it is not a diagnosis. |
 | D34 | The test HTTP server runs in its own process | In-process, its sockets were collected at random and looked like leaks in unrelated tests. Apart, the warning filters could be removed, so any unclosed socket in the test process now fails a test and is the probe's own. |
 | D35 | A garbage collection runs after every test | A leak then fails the test that caused it, rather than whichever test is running when the collector next wakes. |
+| D36 | Styles shared between components live in a stylesheet (`status-badge.css`), not a shared string constant | With one inline `styles` constant used by four components, `ng build` finished its work and then never exited, held open by an esbuild child process. Moving it to `styleUrl` fixed that. The same toolchain versions behaved in DocuMind, which ruled out an install problem. The exact mechanism inside the builder was not established. |
+| D37 | Shell tests go through the real router | A crash on every page got past unit tests that rendered the shell directly, because a child route has no snapshot while the router is still activating it. It was found only by running the app. |
+| D38 | Status colours were chosen with a palette validator | The Phase 1 values were too close under simulated colour blindness. See DESIGN §3. |
+| D39 | Deployment lists ignore the page's time range, and `GET /api/deployments` has no default range | 13 real runs were stored, but the page said there were none, because the newest was 9 days old. Selecting a period on the timeline still narrows the list on the application page. |
+| D40 | No custom time range; logs load in pages rather than a virtualised list | Neither was needed once "Logs ±10 min" links existed and pages were capped at 100 rows. Both add code without answering a new question. |
+| D41 | The timeline fits a phone rather than scrolling inside its panel | Scrolling started at the oldest data, so the newest was off-screen, which is backwards for a monitor. |
+| D42 | Phase 5 browser checks are scratch scripts; they move into the repository as the Playwright journey in Phase 7 | They were needed to verify this phase but depend on a hand-prepared database. Phase 7 makes them repeatable. |

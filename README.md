@@ -5,11 +5,11 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 4 of 10.** The backend is complete: it checks application health on a
-> schedule, tracks state and incidents, records events, ingests and searches structured logs, reads
-> deployment history from GitHub Actions, and serves an overview. It is tested against a controllable
-> sandbox service. The web interface, Docker packaging and CI are not built yet. Features are listed
-> as they are implemented and verified. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
+> **Project status: Phase 5 of 10.** The backend and the web interface work together locally: it
+> checks application health on a schedule, tracks state and incidents, records events, ingests and
+> searches structured logs, reads deployment history from GitHub Actions, and shows all of it in an
+> Angular interface. It is tested against a controllable sandbox service. Docker packaging, CI and
+> deployment are not built yet. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
 [OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
@@ -26,7 +26,7 @@ CloudOps Monitor puts the signals side by side on one time axis:
 - the **deploy of `a1b2c3d` finished at 14:03**,
 - the application's request logs show **5xx errors starting at 14:04**.
 
-## Planned features (first release)
+## Features
 
 - **Application registry** with validated health-check URLs and an SSRF-safe target allowlist.
 - **Health monitoring**: scheduled HTTP checks with timeouts, a documented classification of
@@ -109,6 +109,31 @@ Checks used during development and in CI:
 Health endpoints: `GET /api/health/live` (process up) and `GET /api/health/ready` (database and
 schema usable). API documentation is at `/api/docs` while `CLOUDOPS_API_DOCS=true`.
 
+## Development setup (frontend)
+
+Requires Node.js 22. With the API running on port 8300, this serves the interface on
+http://localhost:4300 and passes `/api` requests through to the API:
+
+```powershell
+cd frontend
+npm ci
+npm start
+```
+
+Sign in with the operator token. Checks used during development:
+
+```powershell
+npm test
+```
+
+```powershell
+npm run format:check
+```
+
+```powershell
+npm run build
+```
+
 ## Trying it with the sandbox
 
 The sandbox (`sandbox/`) is a small service whose health you switch on purpose. CloudOps Monitor
@@ -120,8 +145,9 @@ and run it on http://127.0.0.1:8310:
 .venv\Scripts\python -m cloudops_sandbox
 ```
 
-With `CLOUDOPS_ALLOWED_TARGETS=localhost:8310` in `backend/.env`, register it and break it (any
-HTTP client works; these use PowerShell):
+With `CLOUDOPS_ALLOWED_TARGETS=localhost:8310` in `backend/.env`, register it under **Applications**
+in the interface with the health URL `http://localhost:8310/health`, or through the API, and then
+break it (any HTTP client works; these use PowerShell):
 
 ```powershell
 $h = @{ Authorization = "Bearer <your operator token>" }
@@ -145,8 +171,8 @@ $env:SANDBOX_TRAFFIC_RPS = "2"
 .venv\Scripts\python -m cloudops_sandbox
 ```
 
-Then look at `GET /api/overview`, `GET /api/logs?min_severity=error`,
-`GET /api/applications/sandbox-orders/request-metrics?window=1h` and `GET /api/events`.
+Then open the application in the interface: the evidence timeline shows the incident, the failing
+checks and the 5xx responses on one time axis, with the logs one tab away.
 
 To record deployments, set `github_repo` and `deploy_workflow` on an application. CloudOps reads that
 workflow's runs from GitHub every 5 minutes. Public repositories need no token, but share GitHub's
@@ -154,5 +180,4 @@ limit of 60 requests an hour per IP address, so a network with other GitHub API 
 up. A fine-grained token with *Actions: read* (`CLOUDOPS_GITHUB_TOKEN`) avoids that. CloudOps only
 ever reads from GitHub: it cannot start a deployment.
 
-Docker, frontend, CI/CD and deployment instructions will be added as each part is built and
-verified.
+Docker, CI/CD and deployment instructions will be added as each part is built and verified.
