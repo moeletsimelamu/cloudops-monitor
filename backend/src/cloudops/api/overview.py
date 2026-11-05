@@ -15,15 +15,24 @@ from sqlalchemy.orm import Session
 from cloudops.api.application_schemas import (
     ApplicationOut,
     AvailabilityOut,
+    BucketOut,
     IncidentOut,
 )
 from cloudops.api.deployments import DeploymentOut, deployment_out
 from cloudops.api.deps import OperatorDep, SessionDep
 from cloudops.api.events import EventOut, event_out
 from cloudops.api.params import Cursor, Limit, before_cursor, encode_cursor
-from cloudops.api.views import METRIC_DEFINITIONS, application_views, fleet_health, incident_views
+from cloudops.api.views import (
+    METRIC_DEFINITIONS,
+    WINDOWS,
+    application_views,
+    bucket_out,
+    fleet_health,
+    incident_views,
+)
 from cloudops.db.models import Application, Deployment, Incident, OperationalEvent
 from cloudops.db.types import utc_now
+from cloudops.domain.availability import bucket_size, buckets
 from cloudops.errors import NotFoundError
 
 router = APIRouter(tags=["overview"], dependencies=[OperatorDep])
@@ -160,13 +169,13 @@ def overview(db: SessionDep) -> OverviewOut:
 
     fleet = []
     for view in views:
-        availability, p95 = health[view.id]
+        application_health = health[view.id]
         deployment = latest.get(view.id)
         fleet.append(
             FleetEntry(
                 application=view,
-                availability_24h=availability,
-                p95_ms_24h=p95,
+                availability_24h=application_health.availability,
+                p95_ms_24h=application_health.p95_ms,
                 latest_deployment=deployment_out(deployment, by_id[view.id])
                 if deployment
                 else None,
@@ -220,5 +229,51 @@ def overview(db: SessionDep) -> OverviewOut:
         recent_incidents=_incidents_with_applications(db, [(i, a) for i, a in closed]),
         recent_deployments=[deployment_out(d, a) for d, a in deployments],
         recent_changes=[event_out(e, slug, name) for e, slug, name in changes],
+        definitions=METRIC_DEFINITIONS,
+    )
+
+
+class HealthRow(BaseModel):
+    application: ApplicationOut
+    availability: AvailabilityOut
+    p95_ms: int | None
+    buckets: list[BucketOut]
+
+
+class HealthMatrixOut(BaseModel):
+    window: str
+    window_start: datetime
+    window_end: datetime
+    bucket_seconds: int
+    rows: list[HealthRow]
+    definitions: dict[str, str]
+
+
+@router.get("/health-matrix", response_model=HealthMatrixOut)
+def health_matrix(
+    db: SessionDep,
+    window: Annotated[Literal["1h", "6h", "24h", "7d"], Query()] = "24h",
+) -> HealthMatrixOut:
+    """How every application behaved over a window: its worst check signal per time bucket."""
+    now = utc_now()
+    span = WINDOWS[window]
+    start = now - span
+    size = bucket_size(span)
+    apps = db.scalars(select(Application).order_by(Application.name, Application.id)).all()
+    health = fleet_health(db, apps, start, now)
+    return HealthMatrixOut(
+        window=window,
+        window_start=start,
+        window_end=now,
+        bucket_seconds=int(size.total_seconds()),
+        rows=[
+            HealthRow(
+                application=view,
+                availability=health[view.id].availability,
+                p95_ms=health[view.id].p95_ms,
+                buckets=[bucket_out(b) for b in buckets(health[view.id].samples, start, now, size)],
+            )
+            for view in application_views(db, apps, now)
+        ],
         definitions=METRIC_DEFINITIONS,
     )

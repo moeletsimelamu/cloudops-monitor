@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from cloudops.api.deps import OperatorDep, SessionDep, SettingsDep
-from cloudops.api.params import Cursor, Limit, TimeRange, before_cursor, encode_cursor, time_range
+from cloudops.api.params import Cursor, Limit, before_cursor, encode_cursor, optional_time_range
 from cloudops.db.models import Application, Deployment, SystemState
 from cloudops.db.session import run_db_work, session_scope
 from cloudops.deployments.sync import (
@@ -94,19 +94,22 @@ def deployment_out(deployment: Deployment, app: Application) -> DeploymentOut:
 @router.get("/deployments", response_model=DeploymentPage)
 def list_deployments(
     db: SessionDep,
-    window: Annotated[TimeRange, Depends(time_range)],
+    window: Annotated[tuple[datetime | None, datetime | None], Depends(optional_time_range)],
     application: Annotated[str | None, Query(max_length=40)] = None,
     outcome: Annotated[OutcomeName | None, Query()] = None,
     branch: Annotated[str | None, Query(max_length=255)] = None,
     limit: Limit = 50,
     cursor: Cursor = None,
 ) -> DeploymentPage:
-    """Deployments queued in the time range, newest first."""
-    query = (
-        select(Deployment, Application)
-        .join(Application, Deployment.application_id == Application.id)
-        .where(Deployment.queued_at >= window.start, Deployment.queued_at <= window.end)
+    """Deployments, newest first, within the time range if one is given."""
+    query = select(Deployment, Application).join(
+        Application, Deployment.application_id == Application.id
     )
+    start, end = window
+    if start:
+        query = query.where(Deployment.queued_at >= start)
+    if end:
+        query = query.where(Deployment.queued_at <= end)
     if application:
         app_id = db.scalar(select(Application.id).where(Application.slug == application))
         if app_id is None:

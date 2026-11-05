@@ -3,6 +3,7 @@ availability). Batched, so a list of applications costs a fixed number of querie
 
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import ceil
 
@@ -30,6 +31,7 @@ from cloudops.db.models import (
 )
 from cloudops.domain.availability import (
     Availability,
+    Bucket,
     CheckSample,
     availability,
     bucket_size,
@@ -257,9 +259,27 @@ def availability_out(result: Availability) -> AvailabilityOut:
     )
 
 
+@dataclass(frozen=True)
+class FleetHealth:
+    availability: AvailabilityOut
+    p95_ms: int | None
+    samples: list[CheckSample]
+
+
+def bucket_out(bucket: Bucket) -> BucketOut:
+    return BucketOut(
+        start=bucket.start,
+        checks=bucket.checks,
+        failed=bucket.failed,
+        worst=bucket.worst,
+        p50_ms=bucket.p50_ms,
+        p95_ms=bucket.p95_ms,
+    )
+
+
 def fleet_health(
     db: Session, apps: Sequence[Application], start: datetime, end: datetime
-) -> dict[int, tuple[AvailabilityOut, int | None]]:
+) -> dict[int, FleetHealth]:
     """Availability and p95 per application over a window, from one query for all of them."""
     ids = [app.id for app in apps]
     samples: dict[int, list[CheckSample]] = defaultdict(list)
@@ -298,9 +318,10 @@ def fleet_health(
         durations = [
             s.duration_ms for s in app_samples if s.responded and s.duration_ms is not None
         ]
-        result[app.id] = (
+        result[app.id] = FleetHealth(
             availability_out(availability(app_samples, app.interval_seconds, monitored)),
             percentile(durations, 0.95),
+            app_samples,
         )
     return result
 
@@ -339,12 +360,7 @@ def metrics(db: Session, app: Application, window: str, now: datetime) -> Metric
         availability=availability_out(result),
         p50_ms=percentile(durations, 0.5),
         p95_ms=percentile(durations, 0.95),
-        buckets=[
-            BucketOut(
-                start=b.start, checks=b.checks, failed=b.failed, p50_ms=b.p50_ms, p95_ms=b.p95_ms
-            )
-            for b in buckets(samples, start, now, size)
-        ],
+        buckets=[bucket_out(b) for b in buckets(samples, start, now, size)],
         definitions=METRIC_DEFINITIONS,
     )
 

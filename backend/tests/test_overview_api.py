@@ -252,6 +252,36 @@ def test_deployment_filters(
     assert [i["run_number"] for i in items] == expected
 
 
+def test_deployment_list_shows_old_records_unless_a_range_is_given(
+    client: TestClient, app: FastAPI, github: FakeGitHub
+) -> None:
+    """Deployments are rare: the last one matters even when it is months old."""
+    _with_source(client)
+    forty_days = 40 * 24 * 60
+    github.runs = [_recent_run(1, forty_days), _recent_run(2, 10)]
+    _sync(client, app)
+
+    everything = client.get("/api/deployments").json()["items"]
+    assert [i["run_number"] for i in everything] == [2, 1]
+
+    now = utc_now()
+    recent = client.get("/api/deployments", params={"from": _iso(now - timedelta(days=1))}).json()[
+        "items"
+    ]
+    assert [i["run_number"] for i in recent] == [2]
+    older = client.get("/api/deployments", params={"to": _iso(now - timedelta(days=1))}).json()[
+        "items"
+    ]
+    assert [i["run_number"] for i in older] == [1]
+
+    backwards = client.get(
+        "/api/deployments",
+        params={"from": _iso(now), "to": _iso(now - timedelta(days=1))},
+    )
+    assert backwards.status_code == 422
+    assert backwards.json()["error"]["code"] == "invalid_time_range"
+
+
 def test_deployment_paging_and_validation(
     client: TestClient, app: FastAPI, github: FakeGitHub
 ) -> None:
@@ -481,3 +511,35 @@ def test_overview_lists_recently_closed_incidents(client: TestClient, app: FastA
     assert body["needs_attention"] == []
     assert [i["application_slug"] for i in body["recent_incidents"]] == ["orders-api"]
     assert body["recent_incidents"][0]["closed_at"] is not None
+
+
+# --- health matrix ----------------------------------------------------------------------------
+
+
+def test_health_matrix_shows_the_worst_signal_per_bucket(client: TestClient, app: FastAPI) -> None:
+    _register(client, "orders-api")
+    _register(client, "quiet-api")
+    now = utc_now()
+    observations = {"o": ok(), "w": http(500), "f": http(503)}
+    with session_scope(app.state.session_factory) as db:
+        application = db.scalars(select(Application).where(Application.slug == "orders-api")).one()
+        for minutes, code in [(50, "o"), (50, "w"), (40, "w"), (40, "f"), (30, "o")]:
+            record_check(db, application.id, observations[code], now - timedelta(minutes=minutes))
+            db.flush()
+
+    body = client.get("/api/health-matrix", params={"window": "1h"}).json()
+    assert body["window"] == "1h"
+    assert body["bucket_seconds"] == 60
+    rows = {row["application"]["slug"]: row for row in body["rows"]}
+    worst = [b["worst"] for b in rows["orders-api"]["buckets"] if b["worst"]]
+    assert worst == ["warn", "fail", "ok"]
+    assert all(b["worst"] is None for b in rows["quiet-api"]["buckets"])  # gaps stay empty
+    assert rows["orders-api"]["availability"]["checks"] == 5
+    assert "not uptime" in body["definitions"]["availability"]
+
+
+def test_health_matrix_is_validated_and_protected(app: FastAPI, client: TestClient) -> None:
+    assert client.get("/api/health-matrix", params={"window": "1y"}).status_code == 422
+    assert client.get("/api/health-matrix").json()["rows"] == []
+    with TestClient(app) as anonymous:
+        assert anonymous.get("/api/health-matrix").status_code == 401

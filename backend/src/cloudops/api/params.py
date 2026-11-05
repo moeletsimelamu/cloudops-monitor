@@ -54,6 +54,27 @@ def time_range(
     return TimeRange(start, end)
 
 
+def optional_time_range(
+    from_: Annotated[
+        AwareDatetime | None,
+        Query(alias="from", description="Start (ISO 8601 with a time zone). Default: no limit."),
+    ] = None,
+    to: Annotated[
+        AwareDatetime | None,
+        Query(description="End (ISO 8601 with a time zone). Default: no limit."),
+    ] = None,
+) -> tuple[datetime | None, datetime | None]:
+    """A time range that may be open at either end, for records rare enough that "the newest ones,
+    however old" is the useful default. Paging bounds the result, so there is no maximum span."""
+    if from_ and to and from_ >= to:
+        raise AppError(
+            "'from' must be earlier than 'to'.",
+            code="invalid_time_range",
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+    return from_, to
+
+
 Limit = Annotated[int, Query(ge=1, le=200, description="Page size (1-200).")]
 Before = Annotated[
     int | None, Query(ge=1, description="Return items older than this ID (from next_before).")

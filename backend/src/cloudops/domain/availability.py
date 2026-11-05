@@ -107,8 +107,14 @@ class Bucket:
     start: datetime
     checks: int
     failed: int  # warn or fail
+    worst: str | None  # the worst signal in the bucket; None when it has no checks
     p50_ms: int | None
     p95_ms: int | None
+
+
+def _worst_signal(group: Sequence[CheckSample]) -> str | None:
+    signals = {sample.signal for sample in group}
+    return next((signal for signal in ("fail", "warn", "ok") if signal in signals), None)
 
 
 def bucket_size(window: timedelta) -> timedelta:
@@ -137,6 +143,7 @@ def buckets(
                 start=window_start + index * size,
                 checks=len(group),
                 failed=sum(1 for s in group if s.signal != "ok"),
+                worst=_worst_signal(group),
                 p50_ms=percentile(durations, 0.5),
                 p95_ms=percentile(durations, 0.95),
             )

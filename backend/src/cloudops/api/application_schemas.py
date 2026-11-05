@@ -201,6 +201,7 @@ class BucketOut(BaseModel):
     start: datetime
     checks: int
     failed: int
+    worst: Literal["ok", "warn", "fail"] | None
     p50_ms: int | None
     p95_ms: int | None
 
