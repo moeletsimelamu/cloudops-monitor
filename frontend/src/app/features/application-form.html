@@ -1,0 +1,277 @@
+<div class="page">
+  @if (loadError(); as failure) {
+    <section class="section">
+      <co-error what="This application could not be loaded" [error]="failure" [retryable]="false" />
+    </section>
+  } @else {
+    <form class="section" (ngSubmit)="submit()" novalidate>
+      @if (saveError(); as failure) {
+        <co-error what="This could not be saved" [error]="failure" [retryable]="false" />
+      }
+
+      <fieldset>
+        <legend>Application</legend>
+        <div class="grid">
+          <label class="field" for="name">Name</label>
+          <div class="control">
+            <input
+              id="name"
+              name="name"
+              [ngModel]="form().name"
+              (ngModelChange)="set('name', $event)"
+              [attr.aria-invalid]="errorFor('name') ? 'true' : null"
+              aria-describedby="name-error"
+            />
+            @if (errorFor('name'); as message) {
+              <p id="name-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="slug">Slug</label>
+          <div class="control">
+            <input
+              id="slug"
+              name="slug"
+              class="mono"
+              [ngModel]="form().slug"
+              (ngModelChange)="set('slug', $event)"
+              [disabled]="editing()"
+              [attr.aria-invalid]="errorFor('slug') ? 'true' : null"
+              aria-describedby="slug-help slug-error"
+            />
+            <p id="slug-help" class="muted small">
+              Used in links. Lower-case letters, digits and hyphens. It cannot change later.
+            </p>
+            @if (errorFor('slug'); as message) {
+              <p id="slug-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="environment">Environment</label>
+          <div class="control">
+            <input
+              id="environment"
+              name="environment"
+              [ngModel]="form().environment"
+              (ngModelChange)="set('environment', $event)"
+              [attr.aria-invalid]="errorFor('environment') ? 'true' : null"
+              aria-describedby="environment-error"
+            />
+            @if (errorFor('environment'); as message) {
+              <p id="environment-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="description">Description</label>
+          <div class="control">
+            <input
+              id="description"
+              name="description"
+              [ngModel]="form().description"
+              (ngModelChange)="set('description', $event)"
+            />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Health check</legend>
+        <div class="grid">
+          <label class="field" for="check_url">Health URL</label>
+          <div class="control">
+            <input
+              id="check_url"
+              name="check_url"
+              class="mono"
+              type="url"
+              placeholder="http://localhost:8310/health"
+              [ngModel]="form().check_url"
+              (ngModelChange)="set('check_url', $event)"
+              [attr.aria-invalid]="errorFor('check_url') ? 'true' : null"
+              aria-describedby="check-url-help check-url-error"
+            />
+            @if (errorFor('check_url'); as message) {
+              <p id="check-url-error" class="field-error">{{ message }}</p>
+            }
+            <div id="check-url-help" class="muted small policy">
+              @if (config(); as settings) {
+                @if (settings.target_policy === 'allowlist') {
+                  This server only monitors hosts its operator has listed in
+                  CLOUDOPS_ALLOWED_TARGETS:
+                  @if (settings.allowed_targets.length) {
+                    <span class="mono">{{ settings.allowed_targets.join(', ') }}</span
+                    >.
+                  } @else {
+                    none yet.
+                  }
+                } @else {
+                  This server monitors public addresses, plus:
+                  <span class="mono">{{ settings.allowed_targets.join(', ') || 'none' }}</span
+                  >.
+                }
+              }
+              Internal and cloud metadata addresses are refused, and redirects are not followed.
+            </div>
+          </div>
+
+          <label class="field" for="interval">Check every (seconds)</label>
+          <div class="control">
+            <input
+              id="interval"
+              name="interval"
+              type="number"
+              min="15"
+              max="3600"
+              [ngModel]="form().interval_seconds"
+              (ngModelChange)="set('interval_seconds', $event)"
+              [attr.aria-invalid]="errorFor('interval_seconds') ? 'true' : null"
+              aria-describedby="interval-error"
+            />
+            @if (errorFor('interval_seconds'); as message) {
+              <p id="interval-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="timeout">Timeout (seconds)</label>
+          <div class="control">
+            <input
+              id="timeout"
+              name="timeout"
+              type="number"
+              min="1"
+              max="30"
+              [ngModel]="form().timeout_seconds"
+              (ngModelChange)="set('timeout_seconds', $event)"
+              [attr.aria-invalid]="errorFor('timeout_seconds') ? 'true' : null"
+              aria-describedby="timeout-error"
+            />
+            @if (errorFor('timeout_seconds'); as message) {
+              <p id="timeout-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="slow">Slow above (ms)</label>
+          <div class="control">
+            <input
+              id="slow"
+              name="slow"
+              type="number"
+              min="50"
+              max="30000"
+              [ngModel]="form().slow_threshold_ms"
+              (ngModelChange)="set('slow_threshold_ms', $event)"
+              [attr.aria-invalid]="errorFor('slow_threshold_ms') ? 'true' : null"
+              aria-describedby="slow-error"
+            />
+            @if (errorFor('slow_threshold_ms'); as message) {
+              <p id="slow-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="failure">Failing checks before changing state</label>
+          <div class="control">
+            <input
+              id="failure"
+              name="failure"
+              type="number"
+              min="1"
+              max="5"
+              [ngModel]="form().failure_threshold"
+              (ngModelChange)="set('failure_threshold', $event)"
+              [attr.aria-invalid]="errorFor('failure_threshold') ? 'true' : null"
+              aria-describedby="failure-error"
+            />
+            @if (errorFor('failure_threshold'); as message) {
+              <p id="failure-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="recovery">Good checks before recovering</label>
+          <div class="control">
+            <input
+              id="recovery"
+              name="recovery"
+              type="number"
+              min="1"
+              max="5"
+              [ngModel]="form().recovery_threshold"
+              (ngModelChange)="set('recovery_threshold', $event)"
+              [attr.aria-invalid]="errorFor('recovery_threshold') ? 'true' : null"
+              aria-describedby="recovery-error"
+            />
+            @if (errorFor('recovery_threshold'); as message) {
+              <p id="recovery-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Deployments (optional)</legend>
+        <p class="muted small help">
+          CloudOps reads this workflow's runs from GitHub Actions. It only reads: it cannot start a
+          deployment.
+        </p>
+        <div class="grid">
+          <label class="field" for="repo">GitHub repository</label>
+          <div class="control">
+            <input
+              id="repo"
+              name="repo"
+              class="mono"
+              placeholder="owner/name"
+              [ngModel]="form().github_repo"
+              (ngModelChange)="set('github_repo', $event)"
+              [attr.aria-invalid]="errorFor('github_repo') ? 'true' : null"
+              aria-describedby="repo-error"
+            />
+            @if (errorFor('github_repo'); as message) {
+              <p id="repo-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="workflow">Workflow file</label>
+          <div class="control">
+            <input
+              id="workflow"
+              name="workflow"
+              class="mono"
+              placeholder="deploy.yml"
+              [ngModel]="form().deploy_workflow"
+              (ngModelChange)="set('deploy_workflow', $event)"
+              [attr.aria-invalid]="errorFor('deploy_workflow') ? 'true' : null"
+              aria-describedby="workflow-error"
+            />
+            @if (errorFor('deploy_workflow'); as message) {
+              <p id="workflow-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+
+          <label class="field" for="branch">Branch (all if empty)</label>
+          <div class="control">
+            <input
+              id="branch"
+              name="branch"
+              class="mono"
+              placeholder="main"
+              [ngModel]="form().deploy_branch"
+              (ngModelChange)="set('deploy_branch', $event)"
+              [attr.aria-invalid]="errorFor('deploy_branch') ? 'true' : null"
+              aria-describedby="branch-error"
+            />
+            @if (errorFor('deploy_branch'); as message) {
+              <p id="branch-error" class="field-error">{{ message }}</p>
+            }
+          </div>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button class="btn primary" type="submit" [disabled]="pending()">
+          {{ pending() ? 'Saving…' : editing() ? 'Save changes' : 'Register application' }}
+        </button>
+        <a class="btn" [routerLink]="cancelLink()">Cancel</a>
+      </div>
+    </form>
+  }
+</div>

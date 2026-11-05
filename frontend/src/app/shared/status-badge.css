@@ -1,0 +1,14 @@
+:host {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.word {
+  font-weight: 500;
+}
+
+.plain {
+  font-weight: 400;
+}

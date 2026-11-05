@@ -1,0 +1,231 @@
+<div class="page">
+  @if (application.error(); as failure) {
+    <section class="section">
+      @if (failure.status === 404) {
+        <co-empty [title]="'There is no application called ' + slug()">
+          It may have been removed. See <a routerLink="/applications">all applications</a>.
+        </co-empty>
+      } @else {
+        <co-error
+          what="This application could not be refreshed"
+          [error]="failure"
+          (retry)="application.reload()"
+        />
+      }
+    </section>
+  }
+
+  @if (application.loading()) {
+    <section class="section"><co-skeleton [count]="5" /></section>
+  } @else if (application.data(); as app) {
+    <section class="section head" aria-labelledby="app-name">
+      <div class="title-row">
+        <div class="title">
+          <h2 id="app-name">{{ app.name }}</h2>
+          <span class="muted small">{{ app.environment }}</span>
+          <co-status [status]="app.status" class="status" />
+          @if (app.status === 'stale') {
+            <span class="muted small">
+              was {{ app.health_state }} at last observation; no conclusive check since then
+            </span>
+          } @else if (app.state_since && app.status !== 'paused') {
+            <span class="muted small">since <co-time [at]="app.state_since" /></span>
+          }
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="button" [disabled]="checking()" (click)="checkNow()">
+            {{ checking() ? 'Checking…' : 'Check now' }}
+          </button>
+          <button
+            class="btn"
+            type="button"
+            [disabled]="togglingMonitoring()"
+            (click)="toggleMonitoring()"
+          >
+            {{ app.monitoring_enabled ? 'Pause monitoring' : 'Resume monitoring' }}
+          </button>
+          <a class="btn" [routerLink]="['/applications', app.slug, 'edit']">Edit</a>
+        </div>
+      </div>
+
+      @if (app.description) {
+        <p class="description muted small">{{ app.description }}</p>
+      }
+
+      <dl class="facts">
+        <div>
+          <dt>Last check</dt>
+          <dd><co-time [at]="app.last_observed_at" none="never" /></dd>
+        </div>
+        <div>
+          <dt>Last success</dt>
+          <dd><co-time [at]="app.last_success_at" none="never" /></dd>
+        </div>
+        <div>
+          <dt>Last failure</dt>
+          <dd>
+            <co-time [at]="app.last_failure_at" none="none" />
+            @if (app.last_failure_reason) {
+              <span class="small muted"> {{ formatReason(app.last_failure_reason) }}</span>
+            }
+          </dd>
+        </div>
+        <div>
+          <dt>Next check</dt>
+          <dd><co-time [at]="app.next_check_at" none="paused" /></dd>
+        </div>
+        <div class="wide">
+          <dt>Health URL</dt>
+          <dd class="mono url">{{ app.check_url }}</dd>
+        </div>
+      </dl>
+
+      <div aria-live="polite">
+        @if (checkResult(); as result) {
+          <p class="notice small">{{ result }}</p>
+        }
+      </div>
+      @if (actionError(); as failure) {
+        <co-error what="That did not work" [error]="failure" [retryable]="false" />
+      }
+
+      @if (app.open_incident; as incident) {
+        <div class="incident">
+          <p>
+            <strong>Open incident.</strong> Opened <co-time [at]="incident.opened_at" />; worst
+            state {{ incident.worst_state }}; first seen as
+            {{ formatReason(incident.opening_reason).toLowerCase() }}.
+            @if (app.latest_check?.detail; as detail) {
+              Latest check: {{ detail }}.
+            }
+          </p>
+          @if (incident.preceding_deployment; as preceding) {
+            <p>
+              {{ preceding.summary }}.
+              @if (preceding.url) {
+                <a [href]="preceding.url" target="_blank" rel="noopener">Open the GitHub run</a>.
+              }
+              <span class="muted small">This reports timing only, not a cause.</span>
+            </p>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="section" aria-labelledby="evidence-heading">
+      <div class="section-head">
+        <h2 id="evidence-heading">Evidence</h2>
+        <span class="note"
+          >Last {{ timeRange.window() }}. Click a period to narrow the tabs below.</span
+        >
+      </div>
+      @if (metrics.error(); as failure) {
+        <co-error
+          what="Check history could not be loaded"
+          [error]="failure"
+          (retry)="metrics.reload()"
+        />
+      }
+      @if (metrics.loading()) {
+        <co-skeleton [count]="6" />
+      } @else if (metrics.data(); as data) {
+        <dl class="stats">
+          <div [title]="data.definitions['availability']">
+            <dt>Health-check availability</dt>
+            <dd class="mono">{{ availabilityText() }}</dd>
+          </div>
+          <div [title]="data.definitions['coverage']">
+            <dt>Coverage</dt>
+            <dd class="mono">{{ coverageText() }}</dd>
+          </div>
+          <div>
+            <dt>Checks: OK / warning / failed</dt>
+            <dd class="mono">
+              {{ data.availability.ok }} / {{ data.availability.warn }} /
+              {{ data.availability.fail }}
+            </dd>
+          </div>
+          <div [title]="data.definitions['latency']">
+            <dt>Response time p50 / p95</dt>
+            <dd class="mono">{{ formatMs(data.p50_ms) }} / {{ formatMs(data.p95_ms) }}</dd>
+          </div>
+        </dl>
+        @if (data.availability.insufficient_reason; as reason) {
+          <p class="insufficient small muted">No availability figure yet. {{ reason }}.</p>
+        }
+        @if (data.availability.checks === 0) {
+          <co-empty [title]="'No checks in the last ' + data.window">
+            @if (app.monitoring_enabled) {
+              The first check should appear shortly. If it does not, look at
+              <a routerLink="/system">System</a> to see whether the worker is running.
+            } @else {
+              Monitoring is paused for this application.
+            }
+          </co-empty>
+        } @else {
+          <co-evidence-timeline
+            [metrics]="data"
+            [requests]="requests.data()"
+            [incidents]="incidents.data() ?? []"
+            [deployments]="deployments.data() ?? []"
+            (selected)="focus.set($event)"
+          />
+        }
+        <p class="definition small muted">{{ data.definitions['availability'] }}</p>
+      }
+    </section>
+
+    <section class="section">
+      <div class="tabs" role="tablist" aria-label="Application details">
+        @for (item of tabs; track item.id; let index = $index) {
+          <button
+            [id]="'tab-' + item.id"
+            type="button"
+            role="tab"
+            [attr.aria-selected]="activeTab() === item.id"
+            [attr.aria-controls]="'panel-' + item.id"
+            [tabindex]="activeTab() === item.id ? 0 : -1"
+            (click)="selectTab(item.id)"
+            (keydown)="onTabKey($event, index)"
+          >
+            {{ item.label }}
+          </button>
+        }
+      </div>
+      @if (focusLabel(); as label) {
+        <p class="focus small">
+          Showing <span class="mono">{{ label }}</span>
+          <button class="btn small-btn" type="button" (click)="focus.set(null)">Clear</button>
+        </p>
+      }
+      <div
+        [id]="'panel-' + activeTab()"
+        role="tabpanel"
+        [attr.aria-labelledby]="'tab-' + activeTab()"
+      >
+        @switch (activeTab()) {
+          @case ('checks') {
+            <co-checks-panel [slug]="app.slug" [focus]="focus()" [refresh]="refreshCount()" />
+          }
+          @case ('events') {
+            <co-events-panel [slug]="app.slug" [focus]="focus()" [refresh]="refreshCount()" />
+          }
+          @case ('deployments') {
+            <co-deployments-panel
+              [application]="app"
+              [focus]="focus()"
+              [refresh]="refreshCount()"
+              (changed)="afterAction()"
+            />
+          }
+          @case ('logs') {
+            <co-logs-panel [application]="app" [focus]="focus()" [refresh]="refreshCount()" />
+          }
+          @case ('configuration') {
+            <co-configuration-panel [application]="app" (changed)="afterAction()" />
+          }
+        }
+      </div>
+    </section>
+  }
+</div>

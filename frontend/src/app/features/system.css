@@ -1,0 +1,87 @@
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.overall {
+  padding: 10px 12px 6px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.row-name {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.foot {
+  padding: 8px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.facts > div,
+.config > div {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 13px;
+}
+
+.config {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.config > div {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+dt {
+  color: var(--ink-muted);
+}
+
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.warnings li {
+  display: flex;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+.warnings li:last-child {
+  border-bottom: 0;
+}
+
+.warnings co-glyph {
+  margin-top: 3px;
+}
+
+@media (max-width: 719px) {
+  .config > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

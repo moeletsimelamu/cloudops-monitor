@@ -1,0 +1,107 @@
+.head {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+.title h2 {
+  font-size: 16px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.facts,
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+}
+
+.stats {
+  padding: 10px 12px 2px;
+}
+
+dt {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+dd {
+  margin: 0;
+  font-size: 13px;
+}
+
+.stats dd {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.facts .wide {
+  flex-basis: 100%;
+}
+
+.url {
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  padding: 5px 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.incident {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--fail);
+  background: var(--surface-0);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.insufficient {
+  padding: 2px 12px 0;
+}
+
+.definition {
+  padding: 8px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.focus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--rule);
+}
+
+.small-btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}

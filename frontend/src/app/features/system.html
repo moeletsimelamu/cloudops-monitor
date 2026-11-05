@@ -1,0 +1,214 @@
+<div class="page">
+  <div class="columns">
+    <section class="section" aria-labelledby="ready-heading">
+      <div class="section-head">
+        <h2 id="ready-heading">Readiness</h2>
+        <span class="note"
+          >Can CloudOps do its job? (<span class="mono">/api/health/ready</span>)</span
+        >
+      </div>
+      @if (readiness.error(); as failure) {
+        <co-error what="Readiness is unknown" [error]="failure" (retry)="readiness.reload()" />
+      }
+      @if (readiness.loading()) {
+        <co-skeleton [count]="3" />
+      } @else if (readiness.data(); as data) {
+        <p class="overall">
+          @if (data.status === 'ready') {
+            <co-glyph shape="circle" tone="ok" /> Ready
+          } @else {
+            <co-glyph shape="square" tone="fail" /> Not ready
+          }
+        </p>
+        <table class="data">
+          <tbody>
+            @for (check of readinessChecks(); track check.name) {
+              <tr>
+                <th scope="row" class="row-name">{{ check.name }}</th>
+                <td>
+                  <co-glyph [shape]="glyph(check.state).shape" [tone]="glyph(check.state).tone" />
+                  {{ word(check.state) }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+      <p class="foot muted small">
+        Liveness (<span class="mono">/api/health/live</span>) only says the process is running.
+        Readiness also needs the database, an up-to-date schema and a working monitor.
+      </p>
+    </section>
+
+    <section class="section" aria-labelledby="worker-heading">
+      <div class="section-head">
+        <h2 id="worker-heading">Monitoring worker</h2>
+      </div>
+      @if (status.error(); as failure) {
+        <co-error what="Worker status is unknown" [error]="failure" (retry)="status.reload()" />
+      }
+      @if (status.loading()) {
+        <co-skeleton [count]="4" />
+      } @else if (status.data(); as data) {
+        <dl class="facts">
+          <div>
+            <dt>State</dt>
+            <dd>
+              @if (!data.worker.enabled) {
+                <co-glyph shape="bars" tone="neutral" /> Disabled by configuration
+              } @else if (data.worker.healthy) {
+                <co-glyph shape="circle" tone="ok" /> Running
+              } @else {
+                <co-glyph shape="square" tone="fail" /> Not running or stalled
+              }
+            </dd>
+          </div>
+          <div>
+            <dt>Started</dt>
+            <dd><co-time [at]="data.worker.started_at" /></dd>
+          </div>
+          <div>
+            <dt>Last scheduling pass</dt>
+            <dd class="mono">{{ tickAge() === null ? '—' : tickAge() + ' ago' }}</dd>
+          </div>
+          <div>
+            <dt>Event loop lag</dt>
+            <dd class="mono">
+              {{ data.worker.loop_lag_ms === null ? '—' : data.worker.loop_lag_ms + ' ms' }}
+            </dd>
+          </div>
+          <div>
+            <dt>Checks running now</dt>
+            <dd class="mono">{{ data.worker.checks_in_flight }}</dd>
+          </div>
+          <div>
+            <dt>Failed passes in a row</dt>
+            <dd class="mono">{{ data.worker.consecutive_tick_failures }}</dd>
+          </div>
+          <div>
+            <dt>Last clean-up</dt>
+            <dd><co-time [at]="data.worker.last_retention_at" none="not yet" /></dd>
+          </div>
+        </dl>
+      }
+    </section>
+
+    <section class="section" aria-labelledby="database-heading">
+      <div class="section-head">
+        <h2 id="database-heading">Database</h2>
+      </div>
+      @if (status.data(); as data) {
+        <dl class="facts">
+          <div>
+            <dt>Size</dt>
+            <dd class="mono">
+              {{ data.database.size_bytes === null ? '—' : formatBytes(data.database.size_bytes) }}
+            </dd>
+          </div>
+          <div>
+            <dt>Applications</dt>
+            <dd class="mono">{{ data.database.applications }}</dd>
+          </div>
+          <div>
+            <dt>Health checks stored</dt>
+            <dd class="mono">{{ data.database.health_checks }}</dd>
+          </div>
+          <div>
+            <dt>Open incidents</dt>
+            <dd class="mono">{{ data.database.open_incidents }}</dd>
+          </div>
+          <div>
+            <dt>Version</dt>
+            <dd class="mono">{{ data.version }}</dd>
+          </div>
+        </dl>
+      }
+    </section>
+  </div>
+
+  @if (status.data()?.warnings?.length) {
+    <section class="section" aria-labelledby="warnings-heading">
+      <div class="section-head">
+        <h2 id="warnings-heading">Configuration warnings</h2>
+      </div>
+      <ul class="warnings">
+        @for (warning of status.data()?.warnings; track warning) {
+          <li>
+            <co-glyph shape="triangle" tone="warn" /> <span>{{ warning }}</span>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
+  <section class="section" aria-labelledby="config-heading">
+    <div class="section-head">
+      <h2 id="config-heading">Effective configuration</h2>
+      <span class="note"
+        >Set through CLOUDOPS_* variables. Secrets show only whether they are set.</span
+      >
+    </div>
+    @if (config.error(); as failure) {
+      <co-error what="Configuration is unavailable" [error]="failure" (retry)="config.reload()" />
+    }
+    @if (config.data(); as data) {
+      <dl class="config">
+        <div>
+          <dt>Authentication</dt>
+          <dd class="mono">{{ data.auth_mode }}</dd>
+        </div>
+        <div>
+          <dt>Operator token</dt>
+          <dd class="mono">{{ data.operator_token }}</dd>
+        </div>
+        <div>
+          <dt>Session length</dt>
+          <dd class="mono">{{ data.session_hours }} h</dd>
+        </div>
+        <div>
+          <dt>Allowed host names</dt>
+          <dd class="mono">{{ data.allowed_hosts.join(', ') }}</dd>
+        </div>
+        <div>
+          <dt>Target policy</dt>
+          <dd class="mono">{{ data.target_policy }}</dd>
+        </div>
+        <div>
+          <dt>Allowed targets</dt>
+          <dd class="mono">{{ data.allowed_targets.join(', ') || 'none' }}</dd>
+        </div>
+        <div>
+          <dt>Worker</dt>
+          <dd class="mono">{{ data.worker_enabled ? 'enabled' : 'disabled' }}</dd>
+        </div>
+        <div>
+          <dt>Maximum concurrent checks</dt>
+          <dd class="mono">{{ data.monitor_max_concurrency }}</dd>
+        </div>
+        <div>
+          <dt>GitHub API</dt>
+          <dd class="mono">{{ data.github.api_url }}</dd>
+        </div>
+        <div>
+          <dt>GitHub token</dt>
+          <dd class="mono">{{ data.github.token }}</dd>
+        </div>
+        <div>
+          <dt>GitHub sync every</dt>
+          <dd class="mono">{{ data.github.sync_seconds }} s</dd>
+        </div>
+        <div>
+          <dt>Keep checks, events, logs</dt>
+          <dd class="mono">
+            {{ data.retention.check_days }} d, {{ data.retention.event_days }} d,
+            {{ data.retention.log_days }} d (at most {{ data.retention.log_max_rows }} rows)
+          </dd>
+        </div>
+        <div>
+          <dt>Data directory</dt>
+          <dd class="mono">{{ data.data_dir }}</dd>
+        </div>
+      </dl>
+    }
+  </section>
+</div>

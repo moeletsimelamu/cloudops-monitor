@@ -1,0 +1,278 @@
+<div #host>
+  <div class="toolbar">
+    <span class="legend small">
+      <span class="key"><span class="line"></span>p95 response time</span>
+      <span class="key"><span class="swatch hatch-fail"></span>Incident</span>
+      <span class="key"><span class="tick"></span>Deployment</span>
+      @if (hasRequests()) {
+        <span class="key"><span class="swatch bar"></span>5xx responses, from request logs</span>
+      }
+    </span>
+    <button
+      class="btn small-btn"
+      type="button"
+      [attr.aria-pressed]="showTable()"
+      (click)="showTable.set(!showTable())"
+    >
+      {{ showTable() ? 'View as chart' : 'View as table' }}
+    </button>
+  </div>
+
+  @if (showTable()) {
+    <div class="table-scroll">
+      <table class="data">
+        <caption class="visually-hidden">
+          Periods with checks or request errors, newest first
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Period start</th>
+            <th scope="col">Worst check</th>
+            <th scope="col" class="num">Checks</th>
+            <th scope="col" class="num">Not OK</th>
+            <th scope="col" class="num">p95</th>
+            @if (hasRequests()) {
+              <th scope="col" class="num">5xx</th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of tableRows(); track row.bucket.start) {
+            <tr>
+              <td class="mono">{{ row.bucket.start.slice(0, 19).replace('T', ' ') }} UTC</td>
+              <td>{{ row.bucket.worst ?? 'no checks' }}</td>
+              <td class="num">{{ row.bucket.checks }}</td>
+              <td class="num">{{ row.bucket.failed }}</td>
+              <td class="num">{{ formatMs(row.bucket.p95_ms) }}</td>
+              @if (hasRequests()) {
+                <td class="num">{{ row.errors }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <div class="chart-scroll">
+      <div class="chart" [style.width.px]="width()">
+        <svg
+          [attr.viewBox]="'0 0 ' + width() + ' ' + height()"
+          [attr.width]="width()"
+          [attr.height]="height()"
+          tabindex="0"
+          role="img"
+          [attr.aria-label]="summary()"
+          (pointermove)="onPointer($event)"
+          (pointerleave)="activeIndex.set(null)"
+          (click)="onClick()"
+          (keydown)="onKey($event)"
+          (blur)="activeIndex.set(null)"
+        >
+          <defs>
+            <pattern
+              id="hatch-fail"
+              width="6"
+              height="6"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect width="3" height="6" class="fill-fail" />
+            </pattern>
+            <pattern
+              id="hatch-warn"
+              width="6"
+              height="6"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(135)"
+            >
+              <rect width="3" height="6" class="fill-warn" />
+            </pattern>
+          </defs>
+
+          <!-- Row labels -->
+          <text class="row-label" [attr.x]="left - 8" [attr.y]="stateY + 10">Incidents</text>
+          <text class="row-label" [attr.x]="left - 8" [attr.y]="deployY + 13">Deploys</text>
+          <text class="row-label" [attr.x]="left - 8" [attr.y]="checksY + 13">Checks</text>
+          @if (hasRequests()) {
+            <text class="row-label" [attr.x]="left - 8" [attr.y]="errorsY + 10">5xx</text>
+            <text class="row-label" [attr.x]="left - 8" [attr.y]="errorsY + 24">
+              {{ errorCeiling() }}
+            </text>
+          }
+
+          <!-- Response-time grid -->
+          @for (tick of latencyTicks(); track tick.y) {
+            <line
+              class="grid"
+              [attr.x1]="left"
+              [attr.x2]="plotRight()"
+              [attr.y1]="tick.y"
+              [attr.y2]="tick.y"
+            />
+            <text class="row-label" [attr.x]="left - 8" [attr.y]="tick.y + 4">
+              {{ tick.label }}
+            </text>
+          }
+          @if (!hasLatency()) {
+            <text class="row-label" [attr.x]="left - 8" [attr.y]="latencyNoteY">Response</text>
+            <text class="no-latency" [attr.x]="left + 8" [attr.y]="latencyNoteY">
+              No responses received in this period.
+            </text>
+          }
+
+          <!-- Incidents -->
+          @for (span of incidentSpans(); track span.id) {
+            <rect
+              [attr.x]="span.x"
+              [attr.y]="stateY"
+              [attr.width]="span.width"
+              [attr.height]="stateHeight"
+              [attr.fill]="'url(#hatch-' + span.tone + ')'"
+            />
+            <rect
+              [attr.x]="span.x"
+              [attr.y]="latencyY"
+              [attr.width]="span.width"
+              [attr.height]="latencyHeight"
+              [class]="'wash wash-' + span.tone"
+            />
+          }
+
+          <!-- Deployments -->
+          @for (mark of deploymentMarks(); track mark.id) {
+            <line
+              class="deploy-rule"
+              [attr.x1]="mark.x"
+              [attr.x2]="mark.x"
+              [attr.y1]="deployY + 12"
+              [attr.y2]="checksY + checksHeight"
+            />
+            <g [attr.transform]="'translate(' + mark.x + ' ' + (deployY + 6) + ')'">
+              @switch (mark.shape) {
+                @case ('circle') {
+                  <circle r="4.5" class="fill-ok ring" />
+                }
+                @case ('square') {
+                  <rect x="-4.5" y="-4.5" width="9" height="9" class="fill-fail ring" />
+                }
+                @case ('triangle') {
+                  <path d="M0 -5 L5 4.5 H-5 Z" class="fill-warn ring" />
+                }
+                @default {
+                  <circle r="4" class="hollow" />
+                }
+              }
+              <title>{{ mark.title }}</title>
+            </g>
+            @if (labelDeployments()) {
+              <text class="deploy-label" [attr.x]="mark.x + 8" [attr.y]="deployY + 10">
+                {{ mark.label }}
+              </text>
+            }
+          }
+
+          <!-- Response time -->
+          <path class="latency" [attr.d]="latencyLine()" />
+          @for (dot of latencyDots(); track dot.x) {
+            <circle class="latency-dot" [attr.cx]="dot.x" [attr.cy]="dot.y" r="3" />
+          }
+
+          <!-- Check results: taller means worse -->
+          <line
+            class="grid"
+            [attr.x1]="left"
+            [attr.x2]="plotRight()"
+            [attr.y1]="checksY + checksHeight"
+            [attr.y2]="checksY + checksHeight"
+          />
+          @for (cell of checkCells(); track cell.x) {
+            <rect
+              [attr.x]="cell.x"
+              [attr.y]="cell.y"
+              [attr.width]="cell.width"
+              [attr.height]="cell.height"
+              [class]="'fill-' + cell.tone"
+            />
+          }
+
+          <!-- 5xx responses, shown only when the application ships request logs -->
+          @if (hasRequests()) {
+            <line
+              class="grid"
+              [attr.x1]="left"
+              [attr.x2]="plotRight()"
+              [attr.y1]="errorsY + errorsHeight"
+              [attr.y2]="errorsY + errorsHeight"
+            />
+            @for (bar of errorBars(); track bar.x) {
+              <rect
+                [attr.x]="bar.x"
+                [attr.y]="bar.y"
+                [attr.width]="bar.width"
+                [attr.height]="bar.height"
+                class="fill-fail"
+              />
+            }
+          }
+
+          <!-- Time axis -->
+          @for (tick of axisTicks(); track tick.x) {
+            <line
+              class="axis-tick"
+              [attr.x1]="tick.x"
+              [attr.x2]="tick.x"
+              [attr.y1]="axisY() - 2"
+              [attr.y2]="axisY() + 2"
+            />
+            <text class="axis-label" [attr.x]="tick.x" [attr.y]="axisY() + 14">
+              {{ tick.label }}
+            </text>
+          }
+
+          <!-- Crosshair -->
+          @if (active(); as point) {
+            <line
+              class="crosshair"
+              [attr.x1]="point.x"
+              [attr.x2]="point.x"
+              [attr.y1]="stateY"
+              [attr.y2]="axisY()"
+            />
+          }
+        </svg>
+
+        @if (active(); as point) {
+          <div class="tooltip" [style.left.px]="point.left" aria-live="polite">
+            <div class="mono">{{ point.period }}</div>
+            <div>
+              <strong class="mono">{{ formatMs(point.bucket.p95_ms) }}</strong> p95
+            </div>
+            <div>
+              @if (point.bucket.checks === 0) {
+                <span>No checks in this period</span>
+              } @else {
+                <strong class="mono">{{ point.bucket.checks }}</strong> checks,
+                <strong class="mono">{{ point.bucket.failed }}</strong> not OK
+              }
+            </div>
+            @if (point.requests !== null) {
+              <div>
+                <strong class="mono">{{ point.errors }}</strong> 5xx of
+                <strong class="mono">{{ point.requests }}</strong> requests
+              </div>
+            }
+            @if (point.deployment; as deployment) {
+              <div>
+                Deployment
+                @if (deployment.run_number) {
+                  #{{ deployment.run_number }}
+                }
+                {{ deployment.outcome.replace('_', ' ') }}
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

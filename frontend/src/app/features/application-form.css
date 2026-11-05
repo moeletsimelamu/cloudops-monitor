@@ -1,0 +1,73 @@
+form {
+  max-width: 780px;
+}
+
+fieldset {
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.help {
+  clear: both;
+  margin-bottom: 8px;
+}
+
+.grid {
+  clear: both;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: baseline;
+}
+
+.grid .field {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+input:disabled {
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+input[type='number'] {
+  max-width: 120px;
+}
+
+.policy {
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+
+@media (max-width: 719px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .control {
+    margin-bottom: 8px;
+  }
+}

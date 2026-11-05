@@ -1,0 +1,238 @@
+<div class="page">
+  @if (overview.error(); as failure) {
+    <section class="section">
+      <co-error
+        what="The overview could not be refreshed"
+        [error]="failure"
+        (retry)="overview.reload()"
+      />
+    </section>
+  }
+
+  @if (overview.loading()) {
+    <section class="section"><co-skeleton [count]="6" /></section>
+  } @else if (data(); as view) {
+    <p class="counts" aria-label="Application counts">
+      <span class="total"
+        ><strong class="mono">{{ view.counts.total }}</strong> applications</span
+      >
+      <span
+        ><co-glyph shape="circle" tone="ok" /><strong class="mono">{{
+          view.counts.healthy
+        }}</strong>
+        healthy</span
+      >
+      <span
+        ><co-glyph shape="triangle" tone="warn" /><strong class="mono">{{
+          view.counts.degraded
+        }}</strong>
+        degraded</span
+      >
+      <span
+        ><co-glyph shape="square" tone="fail" /><strong class="mono">{{
+          view.counts.unavailable
+        }}</strong>
+        unavailable</span
+      >
+      <span
+        ><co-glyph shape="dashed" tone="neutral" /><strong class="mono">{{
+          view.counts.stale
+        }}</strong>
+        stale</span
+      >
+      <span
+        ><co-glyph shape="hollow" tone="neutral" /><strong class="mono">{{
+          view.counts.pending
+        }}</strong>
+        pending</span
+      >
+      <span
+        ><co-glyph shape="bars" tone="neutral" /><strong class="mono">{{
+          view.counts.paused
+        }}</strong>
+        paused</span
+      >
+      <span class="asof muted">
+        Data as of <co-time [at]="view.generated_at" mode="exact" />
+        @if (overview.refreshing()) {
+          · updating…
+        }
+      </span>
+    </p>
+
+    @if (view.counts.total === 0) {
+      <section class="section">
+        <co-empty title="No applications are being monitored yet">
+          <a routerLink="/applications/new">Register an application</a> to start checking its
+          health. Its target must be allowed by the server's target policy; see
+          <a routerLink="/system">System</a>.
+        </co-empty>
+      </section>
+    } @else {
+      <section class="section" aria-labelledby="attention-heading">
+        <div class="section-head">
+          <h2 id="attention-heading">Needs attention</h2>
+          <span class="note">Worst first: unavailable, degraded, then no recent observations</span>
+        </div>
+        @if (view.needs_attention.length === 0) {
+          <co-empty title="Nothing needs attention">
+            Every monitored application has a recent healthy observation.
+          </co-empty>
+        } @else {
+          <ul class="attention">
+            @for (entry of view.needs_attention; track entry.application.id) {
+              <li>
+                <div class="attention-main">
+                  <co-status [status]="entry.application.status" />
+                  <a [routerLink]="['/applications', entry.application.slug]" class="app-link">{{
+                    entry.application.name
+                  }}</a>
+                  <span class="muted small">{{ entry.application.environment }}</span>
+                  <span class="for mono">for {{ problemFor(entry) }}</span>
+                </div>
+                <div class="attention-detail small">
+                  @if (entry.application.status === 'stale') {
+                    <span class="muted"
+                      >No conclusive check since
+                      <co-time [at]="entry.application.last_observed_at" />. Check that monitoring
+                      is running on <a routerLink="/system">System</a>.</span
+                    >
+                  } @else {
+                    <span>{{
+                      entry.application.latest_check?.detail ??
+                        formatReason(entry.application.last_failure_reason)
+                    }}</span>
+                  }
+                  @if (entry.application.open_incident?.preceding_deployment; as preceding) {
+                    <span class="preceding">
+                      {{ preceding.summary }}
+                      @if (preceding.url) {
+                        · <a [href]="preceding.url" target="_blank" rel="noopener">GitHub run</a>
+                      }
+                    </span>
+                  }
+                </div>
+              </li>
+            }
+          </ul>
+        }
+      </section>
+
+      <div class="columns">
+        <section class="section fleet" aria-labelledby="fleet-heading">
+          <div class="section-head">
+            <h2 id="fleet-heading">Applications</h2>
+            <span class="note"
+              >Availability and p95 over the last {{ view.health_window_hours }} h</span
+            >
+          </div>
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th scope="col">Status</th>
+                  <th scope="col">Application</th>
+                  <th scope="col" class="low">Environment</th>
+                  <th scope="col">Last check</th>
+                  <th scope="col" class="num" [title]="view.definitions['availability']">
+                    Availability
+                  </th>
+                  <th scope="col" class="num low" [title]="view.definitions['latency']">p95</th>
+                  <th scope="col" class="low">Latest deployment</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (entry of view.fleet; track entry.application.id) {
+                  <tr>
+                    <td><co-status [status]="entry.application.status" /></td>
+                    <td>
+                      <a [routerLink]="['/applications', entry.application.slug]">{{
+                        entry.application.name
+                      }}</a>
+                    </td>
+                    <td class="low muted">{{ entry.application.environment }}</td>
+                    <td><co-time [at]="entry.application.last_observed_at" none="never" /></td>
+                    <td class="num" [title]="entry.availability_24h.insufficient_reason ?? ''">
+                      {{ availabilityText(entry.availability_24h) }}
+                    </td>
+                    <td class="num low">{{ formatMs(entry.p95_ms_24h) }}</td>
+                    <td class="low">
+                      @if (entry.latest_deployment; as deployment) {
+                        <co-outcome [outcome]="deployment.outcome" />
+                        <span class="mono"> {{ shortSha(deployment.commit_sha) }}</span>
+                      } @else {
+                        <span class="muted">—</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="foot muted small">
+            {{ view.definitions['availability'] }} "—" means there is too little data to say.
+          </p>
+        </section>
+
+        <section class="section changes" aria-labelledby="changes-heading">
+          <div class="section-head">
+            <h2 id="changes-heading">Recent changes</h2>
+            <a class="end small" routerLink="/events">All events</a>
+          </div>
+          @if (view.recent_changes.length === 0) {
+            <co-empty title="No state changes or deployments recorded yet" />
+          } @else {
+            <ol class="timeline">
+              @for (event of view.recent_changes.slice(0, recentChangesShown); track event.id) {
+                <li>
+                  <co-severity [severity]="event.severity" class="severity" />
+                  <div class="timeline-body">
+                    <p>{{ event.summary }}</p>
+                    <co-time class="small" [at]="event.occurred_at" />
+                  </div>
+                </li>
+              }
+            </ol>
+          }
+        </section>
+      </div>
+
+      @if (view.recent_incidents.length > 0) {
+        <section class="section" aria-labelledby="closed-heading">
+          <div class="section-head">
+            <h2 id="closed-heading">Recently failed</h2>
+            <span class="note">Incidents closed in the last {{ view.health_window_hours }} h</span>
+          </div>
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th scope="col">Application</th>
+                  <th scope="col">Worst state</th>
+                  <th scope="col">Cause seen first</th>
+                  <th scope="col" class="num">Lasted</th>
+                  <th scope="col" class="low">Closed</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (incident of view.recent_incidents; track incident.id) {
+                  <tr>
+                    <td>
+                      <a [routerLink]="['/applications', incident.application_slug]">{{
+                        incident.application_name
+                      }}</a>
+                    </td>
+                    <td><co-status [status]="incident.worst_state" /></td>
+                    <td>{{ formatReason(incident.opening_reason) }}</td>
+                    <td class="num">{{ formatDuration(incident.duration_seconds ?? 0) }}</td>
+                    <td class="low"><co-time [at]="incident.closed_at" /></td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+    }
+  }
+</div>

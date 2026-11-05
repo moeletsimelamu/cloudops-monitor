@@ -1,0 +1,105 @@
+<a class="skip" href="#main" (click)="skipToContent($event)">Skip to content</a>
+
+<div class="layout">
+  <aside class="rail" [class.open]="menuOpen()">
+    <div class="brand">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+        <path
+          d="M1 9h3l2-5 3 8 2-3h4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+        />
+      </svg>
+      <span class="brand-name">CloudOps Monitor</span>
+      <button
+        class="menu-button"
+        type="button"
+        [attr.aria-expanded]="menuOpen()"
+        aria-controls="primary-navigation"
+        (click)="menuOpen.set(!menuOpen())"
+      >
+        Menu
+      </button>
+    </div>
+    <nav id="primary-navigation" aria-label="Main">
+      @for (item of navigation; track item.path) {
+        <a
+          [routerLink]="item.path"
+          [queryParams]="{ window: timeRange.window() }"
+          routerLinkActive="current"
+          ariaCurrentWhenActive="page"
+          [title]="item.label"
+          (click)="menuOpen.set(false)"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path
+              [attr.d]="item.icon"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="label">{{ item.label }}</span>
+          @if (item.path === '/overview' && openIncidentCount() > 0) {
+            <span class="count" [attr.aria-label]="openIncidentCount() + ' open incidents'">{{
+              openIncidentCount()
+            }}</span>
+          }
+        </a>
+      }
+    </nav>
+    <div class="rail-end small">
+      @if (!auth.authDisabled()) {
+        <button class="link-button" type="button" title="Sign out" (click)="signOut()">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path
+              d="M6 2H2.5v12H6M10 5l3.5 3L10 11M13.5 8H6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="label">Sign out</span>
+        </button>
+      }
+    </div>
+  </aside>
+
+  <div class="column">
+    @if (auth.authDisabled()) {
+      <div class="banner small" role="status">
+        Local mode: no authentication. Anyone who can reach this server can change it.
+      </div>
+    }
+    <header class="topbar">
+      <h1>{{ heading() }}</h1>
+      <div class="controls">
+        @if (showRange()) {
+          <div class="segmented" role="group" aria-label="Time range">
+            @for (option of windows; track option) {
+              <button
+                type="button"
+                [attr.aria-pressed]="timeRange.window() === option"
+                (click)="timeRange.set(option)"
+              >
+                {{ option }}
+              </button>
+            }
+          </div>
+        }
+        <button class="btn plain" type="button" (click)="clock.toggleUtc()">
+          {{ clock.utc() ? 'Times: UTC' : 'Times: local' }}
+        </button>
+        <button class="btn plain" type="button" (click)="theme.cycle()">{{ themeLabel() }}</button>
+      </div>
+    </header>
+    <main id="main" tabindex="-1">
+      <router-outlet />
+    </main>
+  </div>
+</div>

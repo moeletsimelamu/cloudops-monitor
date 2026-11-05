@@ -1,0 +1,186 @@
+:host {
+  display: block;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 8px 12px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--ink-muted);
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.line {
+  width: 14px;
+  height: 2px;
+  background: var(--accent);
+}
+
+.tick {
+  width: 1px;
+  height: 12px;
+  background: var(--ink-muted);
+}
+
+.swatch {
+  width: 12px;
+  height: 10px;
+}
+
+.swatch.bar {
+  background: var(--fail);
+}
+
+.swatch.hatch-fail {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--fail) 0,
+    var(--fail) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+}
+
+.small-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.chart-scroll {
+  overflow-x: auto;
+}
+
+.chart {
+  position: relative;
+}
+
+svg {
+  display: block;
+  cursor: crosshair;
+}
+
+svg:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-label {
+  fill: var(--ink-muted);
+  font-size: 11px;
+  text-anchor: end;
+}
+
+.no-latency {
+  fill: var(--ink-muted);
+  font-size: 12px;
+}
+
+.axis-label {
+  fill: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+.axis-tick,
+.grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+
+.latency {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.latency-dot {
+  fill: var(--accent);
+}
+
+.deploy-rule {
+  stroke: var(--ink-muted);
+  stroke-width: 1;
+}
+
+.deploy-label {
+  fill: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.ring {
+  stroke: var(--surface-1);
+  stroke-width: 2;
+  paint-order: stroke;
+}
+
+.hollow {
+  fill: var(--surface-1);
+  stroke: var(--neutral);
+  stroke-width: 2;
+}
+
+.fill-ok {
+  fill: var(--ok);
+}
+
+.fill-warn {
+  fill: var(--warn);
+}
+
+.fill-fail {
+  fill: var(--fail);
+}
+
+.wash {
+  opacity: 0.08;
+}
+
+.wash-warn {
+  fill: var(--warn);
+}
+
+.wash-fail {
+  fill: var(--fail);
+}
+
+.crosshair {
+  stroke: var(--ink);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.tooltip {
+  position: absolute;
+  top: 44px;
+  width: 216px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.tooltip strong {
+  color: var(--ink);
+  font-weight: 500;
+}
