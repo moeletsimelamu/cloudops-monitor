@@ -60,10 +60,13 @@ async def _trickle(_request: Request) -> Response:
 
 
 def build_app() -> Starlette:
-    """A fixed set of behaviours, plus a ``/health`` switched through ``/_control/health``."""
-    health: dict[str, Any] = {"status": 200, "body": {"status": "pass"}}
+    """A fixed set of behaviours, plus a ``/health`` switched through ``/_control/health``
+    (status code, body, and a delay in seconds before answering)."""
+    health: dict[str, Any] = {"status": 200, "body": {"status": "pass"}, "delay": 0.0}
 
     async def show_health(_request: Request) -> Response:
+        if health["delay"]:
+            await asyncio.sleep(float(health["delay"]))
         return JSONResponse(health["body"], status_code=health["status"])
 
     async def set_health(request: Request) -> Response:
@@ -118,11 +121,12 @@ class ServerProcess:
     def url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
 
-    def set_health(self, status: int = 200, body: dict[str, Any] | None = None) -> None:
+    def set_health(
+        self, status: int = 200, body: dict[str, Any] | None = None, delay: float = 0.0
+    ) -> None:
+        change = {"status": status, "body": body or {"status": "pass"}, "delay": delay}
         request = urllib.request.Request(  # noqa: S310 - our own test server
-            self.url("/_control/health"),
-            data=json.dumps({"status": status, "body": body or {"status": "pass"}}).encode(),
-            method="POST",
+            self.url("/_control/health"), data=json.dumps(change).encode(), method="POST"
         )
         with urllib.request.urlopen(request, timeout=10):  # noqa: S310
             pass

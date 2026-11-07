@@ -42,6 +42,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+markers = ["system: starts real server processes; slower (deselect with -m 'not system')"]
 filterwarnings = ["error"]
 
 [tool.ruff]
