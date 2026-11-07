@@ -64,7 +64,19 @@ passed afterwards. The database was never damaged, and a real restart is never t
 
 ### On GitHub
 
-RESULTS_GITHUB
+| Run | Result |
+|---|---|
+| CI #9 (branch `phase-8-review`, 1081d19) | **All 7 jobs passed** in 3 min 35 s: backend with system tests on Python 3.12 and 3.14, sandbox, frontend, browser end-to-end (Playwright: "20 passed (1.6m)"), dependency audit, and the container job. Every action ran from its pinned commit. |
+
+In the container job, every step succeeded, among them the new one: both running containers have
+a read-only root file system, `no-new-privileges` and an empty capability bounding set, and cannot
+write outside their volume. The smoke test, Docker's health check and the restart then all passed
+under those settings. As in earlier phases, job logs need a sign-in, so these results come from the
+run page, its step list and its annotations.
+
+Retention under load, from the backend jobs' notices: on Python 3.14, 288,110 checks deleted in
+3.9 s with reads during retention at a median of 190 ms (max 538 ms); on Python 3.12, 6.5 s, median
+431 ms (max 1,086 ms). These are in line with Phase 7.
 
 ## Not established
 
