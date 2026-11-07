@@ -5,12 +5,13 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 7 of 10.** The backend and the web interface work together locally: it
+> **Project status: Phase 8 of 10.** The backend and the web interface work together locally: it
 > checks application health on a schedule, tracks state and incidents, records events, ingests and
 > searches structured logs, reads deployment history from GitHub Actions, and shows all of it in an
 > Angular interface. It is tested against a controllable sandbox service, as a running system
 > (restarts, kills, a locked database, 40 days of data) and through a browser, packaged as a
-> container image, and checked and published by GitHub Actions. It has not been deployed to a
+> container image, and checked and published by GitHub Actions. A security and quality review
+> ([docs/REVIEW.md](docs/REVIEW.md)) found and fixed seven issues. It has not been deployed to a
 > server.
 > Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 

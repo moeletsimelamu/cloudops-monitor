@@ -59,11 +59,23 @@ For logs and request metrics as well, create an ingest key for the application i
 ### With the image alone
 
 ```bash
-docker run -d --name cloudops -p 127.0.0.1:8300:8300 -v cloudops-data:/data -e CLOUDOPS_OPERATOR_TOKEN=<token> -e CLOUDOPS_ALLOWED_TARGETS=<host:port,...> ghcr.io/moeletsimelamu/cloudops-monitor:latest
+docker run -d --name cloudops -p 127.0.0.1:8300:8300 -v cloudops-data:/data --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges -e CLOUDOPS_OPERATOR_TOKEN=<token> -e CLOUDOPS_ALLOWED_TARGETS=<host:port,...> ghcr.io/moeletsimelamu/cloudops-monitor:latest
 ```
 
 `.env.example` lists every setting. The image sets `CLOUDOPS_DATA_DIR=/data`,
 `CLOUDOPS_STATIC_DIR=/app/static`, `CLOUDOPS_LOG_FORMAT=json` and turns the API documentation off.
+The `--read-only`, `--tmpfs`, `--cap-drop` and `--security-opt` options match `compose.yaml`: only
+`/data` and an in-memory `/tmp` are writable, and the process has no Linux capabilities and cannot
+gain any. CI checks this on the running containers.
+
+### Behind a TLS proxy
+
+Put the proxy's address (or its network, such as the Docker network it shares with the container)
+in `CLOUDOPS_TRUSTED_PROXIES`, keep its `Host` header, and add the public name to
+`CLOUDOPS_ALLOWED_HOSTS`. Only then are `X-Forwarded-For` and `X-Forwarded-Proto` believed, which
+makes the session cookie `Secure` and counts failed sign-ins per client rather than for the proxy as
+a whole. Nobody's forwarded headers are believed by default, so a client cannot claim another
+address or HTTPS.
 
 ## 3. Operating it
 
@@ -76,7 +88,8 @@ docker run -d --name cloudops -p 127.0.0.1:8300:8300 -v cloudops-data:/data -e C
 | Back up | `docker compose exec cloudops cloudops db backup /data/backup.db`, then `docker compose cp cloudops:/data/backup.db .` The backup uses SQLite's online backup, so the server can keep running. |
 | Upgrade | Pull or build the new image and start it with the same volume. Schema migrations run at start-up (`CLOUDOPS_AUTO_MIGRATE=true`). Take a backup first. |
 | Restore | Stop the service, copy the backup over `/data/cloudops.db` in the volume, start it again. |
-| Rotate the operator token | Change `CLOUDOPS_OPERATOR_TOKEN` and restart. New sign-ins need the new token, but browsers already signed in stay signed in until their session expires (`CLOUDOPS_SESSION_HOURS`, 12 by default). There is no command yet to end them all at once; that is a Phase 8 review item. |
+| Rotate the operator token | Generate a new one (`cloudops generate-token`), change `CLOUDOPS_OPERATOR_TOKEN` and restart. Every browser session ends, because sessions are bound to the token they were signed in with, and scripts using the old token as a bearer token are refused. |
+| End every session without rotating | *System → Sessions → Sign out everywhere* (or `DELETE /api/auth/sessions`). For a lost device; it does not stop anyone who knows the token, so rotate if the token itself may have leaked. |
 | Remove everything | `docker compose down -v` deletes the containers and the data volume. |
 
 Data lives only in the volume. The image is rebuilt from source each time and holds nothing that
@@ -117,9 +130,9 @@ every delivery:
 | Backend · Python 3.12 and 3.14 | ruff lint and format (backend and `scripts/`), mypy strict, pytest, including the system tests that run the server as a real process (start-up failures, stop and restart, kill during a check, a held database lock, timeouts, time zones, retention under load; the retention measurements become notices on the run) |
 | Sandbox | ruff, mypy, pytest |
 | Frontend | Prettier, unit and component tests, production build |
-| Browser end-to-end | Playwright against the production build served by the real server, with the sandbox: the operational journey, every screen at two sizes in both themes with axe, losing the API, a lost session, a UTC+14 time zone |
+| Browser end-to-end | Playwright against the production build served by the real server, with the sandbox: the operational journey, every screen at two sizes in both themes with axe, keyboard-only use, signing out everywhere from two browsers, losing the API, a lost session, a UTC+14 time zone |
 | Dependency audit | `pip-audit` on every pinned Python package; `npm audit` on the packages that end up in the browser bundle. Development-only npm packages are not checked here, because they never ship. |
-| Container images | Build both images; non-root users, an empty data volume, no `.env` files and no source, tests or docs in the image, app files the server cannot change; an invalid setting refused with one JSON line; the smoke test, real deployment records included; JSON logs without either token; Docker's health check; data surviving a restart |
+| Container images | Build both images; non-root users, an empty data volume, no `.env` files and no source, tests or docs in the image, app files the server cannot change; running containers with a read-only file system, no capabilities and no privilege gain; an invalid setting refused with one JSON line; the smoke test, real deployment records included; JSON logs without either token; Docker's health check; data surviving a restart |
 
 **Deploy** (`deploy.yml`) runs on every push to `main` and on demand, one at a time:
 

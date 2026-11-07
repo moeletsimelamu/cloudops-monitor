@@ -161,8 +161,11 @@ periods) and a table alternative ("View as table").
   don't flood screen readers.
 - `prefers-reduced-motion` disables the few transitions.
 - Checked in Phase 5 with axe in headless Chromium on 14 routes at 3 widths and in both themes (no
-  violations), and a scripted keyboard-only journey. It has not been tried with a real screen reader;
-  that is for Phase 8.
+  violations), and a scripted keyboard-only journey. In Phase 8, axe at every impact level (not only
+  serious and critical) found nothing on any screen at 320 and 1280 px in both themes, with the sign-in
+  page and an open dialog included; nothing scrolls sideways at 320 px, the width WCAG uses for 400 %
+  zoom; and keyboard use (skip link, navigation, dialog focus) is a browser test in CI. It has still
+  not been tried with a real screen reader.
 
 ## 9. Responsive behaviour
 

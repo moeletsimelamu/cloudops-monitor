@@ -357,6 +357,7 @@ about cause.
 | `GET /api/health/live` | The process is running and the event loop responds. Never touches the database. | none |
 | `GET /api/health/ready` | Can do its job: the database answers `SELECT 1`, the schema is at the Alembic head, and the worker heartbeat is fresh (when the worker is enabled; this check is added with the worker in Phase 3). 503 with a list of failing checks otherwise. | none (no details beyond pass/fail names) |
 | `GET /api/auth/session` | Whether the caller is signed in, and the auth mode. `POST` signs in with the operator token; `DELETE` signs out. | none |
+| `DELETE /api/auth/sessions` | Ends every browser session, the caller's included ("Sign out everywhere" on the System page). | operator |
 | `GET /api/system/status` | Worker heartbeat and loop lag, in-flight checks, last retention run, GitHub sync status and rate-limit remaining, database size, version, configuration warnings. | operator |
 | `GET /api/system/config` | Effective non-secret configuration and configuration warnings. Secrets are shown only as `set` / `not set`. *(Implemented in Phase 2; `/status` comes with the worker.)* | operator |
 
@@ -393,7 +394,14 @@ All routes need the operator. Errors use the envelope from §7.
 - `CLOUDOPS_AUTH_MODE=token` (default in Docker): one operator token (`CLOUDOPS_OPERATOR_TOKEN`, at
   least 32 characters) is exchanged on the sign-in page for an **HttpOnly, SameSite=Strict session
   cookie**. Mutating requests also require a same-origin `Origin` header. API clients may send
-  `Authorization: Bearer <token>` instead.
+  `Authorization: Bearer <token>` instead. Failed sign-ins and wrong bearer tokens count against
+  the same limit (5 a minute per client).
+- The database keeps an HMAC of each session ID keyed with the operator token, so a session is only
+  valid while that token is configured: rotating the token and restarting ends every session. The
+  System page can also end them all without a rotation.
+- Behind a reverse proxy, `CLOUDOPS_TRUSTED_PROXIES` names the proxies whose `X-Forwarded-For` and
+  `X-Forwarded-Proto` are believed, so limits count per client and cookies are `Secure` behind TLS.
+  Nobody's are believed by default.
 - `CLOUDOPS_AUTH_MODE=disabled` is for local development only. The UI shows a permanent "Local mode
   — no authentication" banner, and the server logs a warning at start-up.
 - There is one operator role. A multi-user model is a non-goal for the first release, and
@@ -425,7 +433,7 @@ erDiagram
 | `events` | occurred_at, type, severity, application_id, incident_id, deployment_id, summary, details (JSON) | (occurred_at), (application_id, occurred_at) |
 | `deployments` | application_id, source, external_id, attempt, run_number, commit_sha, branch, trigger, actor, title, outcome, started_at, completed_at, url, synced_at | unique (source, external_id, attempt); (application_id, started_at) |
 | `log_entries` | application_id, timestamp, received_at, severity (int), event, message, correlation_id, environment, attributes (JSON) | (application_id, timestamp), (timestamp), (correlation_id) |
-| `sessions` | id_hash, created_at, expires_at | id_hash |
+| `sessions` | token_hash (HMAC-SHA256 of the session ID, keyed with the operator token), created_at, expires_at | token_hash |
 | `system_state` | key, value (JSON), updated_at, used for the worker heartbeat, sync cursors and ETags | key |
 
 Monitoring settings live on `applications`, not in a separate `MonitoringConfiguration` table,

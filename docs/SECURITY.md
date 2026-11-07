@@ -6,7 +6,8 @@
 > redaction of CloudOps's own logs), the error envelope (§8) and security headers (§9). The
 > target policy (§3) followed in Phase 3, and ingest keys, limits and redaction (§7) and the
 > read-only GitHub integration (§5, §6) in Phase 4, and container controls and dependency audits
-> (§9) in Phase 6. Phase 8 reviews every item.
+> (§9) in Phase 6. **Phase 8 reviewed every item**; what it found and changed is in
+> [REVIEW.md](REVIEW.md), and §10 lists what remains.
 
 ## 1. Deployment assumptions
 
@@ -53,9 +54,11 @@ Always enforced, whatever the policy:
 - **Never reachable, even when allowlisted:** link-local `169.254.0.0/16` and `fe80::/10`,
   including the cloud metadata service at `169.254.169.254` and `fd00:ec2::254`; `0.0.0.0/8` and
   `::`; multicast; broadcast; reserved ranges. IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) are
-  unwrapped before checking.
+  unwrapped before checking. IPv6 addresses that lead to an IPv4 address (NAT64 `64:ff9b::/96`,
+  6to4, Teredo and the deprecated `::a.b.c.d` form) are checked both as themselves and as that IPv4
+  address, so `64:ff9b::a9fe:a9fe` (the metadata service through a NAT64 gateway) is blocked too.
 - In public mode, these are blocked as well: loopback, RFC 1918, CGNAT `100.64.0.0/10`, unique-local
-  `fc00::/7`, documentation ranges and benchmark ranges.
+  `fc00::/7`, the deprecated site-local `fec0::/10`, documentation ranges and benchmark ranges.
 
 ### 3.2 Enforcement points
 
@@ -82,14 +85,21 @@ redirects not followed, the 64 KiB body cap and the hard deadline. When a name h
 addresses, **all** of them are checked before any connection attempt. One blocked address blocks
 the check, even if the others are fine.
 
-### 3.4 Remaining limitations (to verify in Phase 8)
+### 3.4 Phase 8 review and remaining limitations
 
-- An allowlisted hostname is trusted to point wherever its DNS points. The allowlist is only as good
-  as the operator's control of those names.
+The review re-read both enforcement points and tried every IPv6 form that can carry an IPv4 address.
+It found that NAT64, IPv4-compatible, 6to4, Teredo and site-local addresses passed the public-mode
+check, and that NAT64 for the metadata address passed even for an allowlisted name (REVIEW.md, F4).
+They are now blocked at registration and at connection time, with tests that fail on the old code.
+DNS rebinding is covered by tests that change the DNS answer between registration and the check,
+for IPv4 and IPv6 answers.
+
+- An allowlisted hostname is trusted to point wherever its DNS points, except at the always-blocked
+  ranges. The allowlist is only as good as the operator's control of those names.
 - An open proxy on an allowed host could still be used to reach other places. Do not allowlist
   proxies.
-- IPv6 coverage depends on the host's resolver returning AAAA records. It will be tested where the
-  CI environment allows.
+- The tests give the probe IPv6 answers through its resolver; no check has been made over a real IPv6
+  network, because neither this machine nor the CI runners have one configured.
 
 ## 4. Authentication and authorisation
 
@@ -97,9 +107,22 @@ the check, even if the others are fine.
   `/api/*` route except `/api/health/live`, `/api/health/ready` and `/api/ingest/*`, which use
   ingest keys.
 - The sign-in page exchanges the operator token for a random session ID. The cookie is HttpOnly,
-  `SameSite=Strict`, and `Secure` when served over HTTPS. Only the hash of the session ID is stored,
-  and sessions expire after 12 h. The token comparison is constant-time. Failed sign-ins are
+  `SameSite=Strict`, and `Secure` when served over HTTPS (directly, or behind a trusted proxy). The
+  session ID itself is never stored (see below), and sessions expire after 12 h. The token comparison is constant-time. Failed sign-ins are
   rate-limited (5 per minute per client).
+- Failed sign-ins **and wrong bearer tokens** share that limit (Phase 8: before, a bearer token could
+  be guessed without any limit).
+- The database stores an **HMAC of each session ID keyed with the operator token**, never the ID or
+  anything derived from the token alone. A session works only while the token it was signed in with
+  is configured, so rotating `CLOUDOPS_OPERATOR_TOKEN` and restarting ends every session. *Sign out
+  everywhere* on the System page (`DELETE /api/auth/sessions`) ends them all without a rotation.
+- `X-Forwarded-For` and `X-Forwarded-Proto` are believed only from `CLOUDOPS_TRUSTED_PROXIES`
+  (empty by default). Behind a TLS proxy listed there, the cookie is `Secure` and limits count per
+  client; nobody else can claim another address or HTTPS. `cloudops serve` turns off uvicorn's own
+  default, which trusted these headers from `127.0.0.1`, and its `server` header.
+- Every request body is limited while it is received: 64 KiB, or 256 KiB for log batches. Without
+  this, anyone who could reach the server could make it hold a body of any size in memory, because
+  the framework reads the body before authentication is checked.
 - `POST`, `PATCH` and `DELETE` requests must carry an `Origin` header that matches the configured
   public origin. Together with SameSite=Strict, this protects against CSRF.
 - `CLOUDOPS_AUTH_MODE=disabled` is accepted for local development. It is shown in a banner and in
@@ -120,7 +143,10 @@ the check, even if the others are fine.
 
 `.env.example` contains placeholders only. The configuration endpoint reports secrets as
 `set`/`not set`. A logging filter masks known secret values and credential-shaped strings before
-any log line is written.
+any log line is written, in the message, in every structured field at any depth, and in tracebacks.
+Phase 8 scanned the whole Git history (23 commits) for credential patterns and sensitive file
+names: it holds only labelled test values and AWS's documented example key, and no `.env`,
+database or key file was ever committed.
 
 ### In the browser
 
@@ -136,16 +162,20 @@ follows only `https://` links from event details.
   configuration.
 - The first release has no deployment trigger. Deployments run in GitHub Actions, where secrets
   live in GitHub environments, and CloudOps reads the results with a read-only token.
-- Workflows use least-privilege `permissions:` blocks and pin third-party actions to full commit
-  SHAs. The deploy workflow refuses to run (and says why) when its target configuration is absent.
+- Workflows use least-privilege `permissions:` blocks and pin every action, GitHub's own included,
+  to a full commit SHA (with the version in a comment). Secrets reach steps only through `env:`,
+  never inside a script, and pull requests run with `pull_request`, so a fork never sees them. The
+  deploy workflow refuses to run (and says why) when its target configuration is absent.
 
 ## 7. Logging hygiene
 
 - CloudOps's own logs never include request bodies, cookies, `Authorization` headers or query
   strings of sign-in requests.
-- Ingested logs are redacted before storage (see [ARCHITECTURE.md §5.1](ARCHITECTURE.md)). The
-  limitation: pattern-based redaction cannot catch every secret or every piece of personal data.
-  Applications remain responsible for not logging them.
+- Ingested logs are redacted before storage (see [ARCHITECTURE.md §5.1](ARCHITECTURE.md)): values
+  under sensitive attribute names, bearer and basic credentials, JWTs, GitHub, AWS, Slack, Stripe
+  and Google keys, CloudOps ingest keys, PEM private keys (even cut short), credentials in URLs and
+  `password=`-style pairs. The limitation: pattern-based redaction cannot catch every secret or
+  every piece of personal data. Applications remain responsible for not logging them.
 - Retention is 7 days or 200k rows by default, whichever is reached first.
 
 ## 8. Input validation and errors
@@ -158,6 +188,8 @@ severity and outcome enums, and `owner/repo` and workflow file name patterns.
 
 All errors use one envelope: `{"error": {"code", "message", "details", "request_id"}}`. Unhandled
 exceptions return a generic 500 with the request ID. Stack traces go only to the server log.
+Validation errors give the location and the rule, never the rejected value. Request bodies are
+limited in size before they are parsed (§4).
 
 ## 9. Containers and dependencies
 
@@ -165,6 +197,10 @@ exceptions return a generic 500 with the request ID. Stack traces go only to the
   owned by root so the server cannot change them, data only in the `/data` volume. No build tools,
   source tree, tests, docs or `.env` files in the final image. CI checks each of these on the built
   image rather than trusting the Dockerfile.
+- At run time (`compose.yaml` and the documented `docker run`) the root file system is read-only
+  with an in-memory `/tmp`, every Linux capability is dropped and privilege gain is disabled. CI
+  checks this on the running containers: read-only root, an empty capability bounding set, no
+  write outside `/data`.
 - Ports are published on `127.0.0.1` in `compose.yaml` and in the documented `docker run` command.
   Anything reachable from other machines needs a TLS proxy in front (DEPLOYMENT.md §6).
 - The images take secrets only at run time. CI uses throwaway tokens made from the run ID and
@@ -186,4 +222,21 @@ exceptions return a generic 500 with the request ID. Stack traces go only to the
 
 ## 10. Known limitations
 
-To be completed in Phase 8 with actual findings.
+Found or confirmed in the Phase 8 review. None is a defect with a fix that fits this release; each
+is a property of the design or of what could be tested here.
+
+| Limitation | Consequence | What would address it |
+|---|---|---|
+| One shared operator token, no user accounts | No record of who did what, no MFA, no roles. Anyone with the token is the operator. | User accounts with an identity provider; out of scope for this release (§1). |
+| The failed sign-in limit is per process and in memory | A restart clears it. It is per client address, so many addresses can each guess 5 times a minute; the 32-character minimum, not the limit, is what makes guessing infeasible. | A persistent limiter, if guessing were a realistic threat. |
+| Someone else's failed sign-ins from the same address lock the operator out for up to a minute | Possible when several people share an address, or behind a proxy that is not in `CLOUDOPS_TRUSTED_PROXIES`. | List the proxy; then counts are per client. |
+| Ending all sessions does not revoke the token | A person who knows the token can sign in again. | Rotate the token if it may have leaked (DEPLOYMENT.md §3). |
+| Ingest keys are not rate-limited when wrong | 43 random characters make guessing infeasible; a wrong key costs one hashed lookup. | — |
+| Pattern-based log redaction | A secret in an unknown format, or personal data, can still be stored if an application logs it. | Applications must not log secrets; redaction is a safety net. |
+| The SSRF allowlist trusts DNS for listed names | A listed name pointing somewhere unexpected (other than always-blocked ranges) is followed. | Allowlist names you control, or IP addresses. |
+| Python packages are pinned by version, not by hash | A compromised package index could serve a different file for the same version. | `--require-hashes` with a hashed constraints file. |
+| Base images are pinned by tag (`python:3.14.9-slim-trixie`, `node:22.14.0-bookworm-slim`), not digest | A re-pushed tag would change the image. Tags of exact patch versions are rarely re-pushed except for security rebuilds. | Pin digests, with automated update pull requests. |
+| No automated dependency update pull requests | New advisories are found by the CI audit, which fails, rather than fixed ahead of time. | Dependabot or Renovate (not enabled: it would open pull requests on the public repository). |
+| Development-only npm packages have known moderate advisories (16 on 2026-11-08, none high) | They run on developer machines and CI, never in the browser bundle or the image. | Upgrading the Angular toolchain when fixed versions ship. |
+| Not tested with a screen reader | Automated checks (axe at every impact level, keyboard tests) pass, but what a screen reader announces has not been heard. | A manual pass with NVDA or VoiceOver. |
+| No HTTPS of its own | Without a TLS proxy, the token and the session cookie cross the network in clear text. | Never expose it without a TLS proxy (DEPLOYMENT.md §6). |

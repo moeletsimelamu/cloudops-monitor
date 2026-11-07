@@ -14,7 +14,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 5 | Frontend and product design | Done — 491 backend + 76 frontend tests; every screen checked in headless Chromium against real API data |
 | 6 | CI/CD and packaging | Done — CI green on GitHub (6 jobs); image published to GHCR by Deploy; rollout correctly reported as not configured |
 | 7 | Integration and operational hardening | Done: system tests of the real server process, Playwright journey in CI, six defects fixed |
-| 8 | Security and quality review | Not started |
+| 8 | Security and quality review | Done: seven findings fixed (REVIEW.md); sessions end on token rotation; SECURITY.md §10 complete |
 | 9 | Deployment and final verification | Not started — needs a decision (see §6) |
 | 10 | Portfolio readiness | Not started |
 
@@ -255,6 +255,7 @@ names only), verification of every claim, final report.
 | B1 | Resolved 2026-11-05: `moeletsimelamu/cloudops-monitor` exists. `gh` is not installed, so CI results are read on github.com | — | Nothing. |
 | B2 | Docker is not installed locally | Local `docker compose up` verification | Nothing. The images are built and smoke-tested in CI on every push; they have never been built on this machine. Installing Docker Desktop later would allow local verification. |
 | B3 | Cloud hosting choice | Phase 9 Option B only | A decision at Phase 9, after a price check. |
+| B4 | No screen reader available to this session | A manual screen reader pass (SECURITY.md §10) | Optional: a pass with NVDA or VoiceOver. |
 
 ## 9. Decision log
 
@@ -315,3 +316,9 @@ names only), verification of every claim, final report.
 | D53 | System tests start the server with `cloudops serve` in a child process and are part of the normal pytest run (marker `system`) | Restarts, kills, locks held by another process and start-up failures only exist for a real process. Keeping them in the default run means CI cannot skip them; `-m "not system"` is there for quick local runs. |
 | D54 | The browser tests share one server and one database, run in order, and set up their own data through the API | Starting a server per test would multiply the run time for no extra evidence. Each file creates and removes its own applications, so they do not depend on each other's data. |
 | D55 | CI's container smoke test reads this repository's own workflow runs as deployment records | It is the one real deployment source available to CI, and it proves the GitHub path end to end, where the other tests use a fake GitHub. |
+| D56 | Sessions are stored as an HMAC of their ID keyed with the operator token | Rotating the token then ends every session with no extra state, migration or start-up step, and the database holds nothing derived from the token alone. A version counter or token fingerprint would need storing and comparing. |
+| D57 | Wrong bearer tokens share the sign-in failure limit | A bearer token is a guess at the same secret; two separate budgets would double the guessing rate for nothing. |
+| D58 | Every request body is limited in the outermost application middleware (64 KiB, 256 KiB for log batches) | FastAPI reads a body before authentication, so a limit inside an endpoint would come too late. No operator request comes near 64 KiB. |
+| D59 | Forwarded headers are believed only from `CLOUDOPS_TRUSTED_PROXIES`, applied by the application; `cloudops serve` turns uvicorn's handling off | Uvicorn's default trusts `127.0.0.1`, which is wrong both ways: spoofable by local processes, and not the proxy's address inside a container. Applying it in the app also covers tests and other servers. |
+| D60 | IPv6 transition addresses are checked as themselves and as the IPv4 address inside | Either form being blocked blocks the connection, so nothing that was blocked before is now allowed, while NAT64 to public addresses keeps working on IPv6-only hosts. |
+| D61 | Actions pinned to commit SHAs; no Dependabot | Tags can move. Automated pull requests on a public portfolio repository would be noise without someone to review them; the CI audit catches known advisories. |
