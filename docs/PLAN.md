@@ -12,7 +12,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 3 | Application registry and monitoring | Done — 333 backend + 8 sandbox tests; live run against the sandbox |
 | 4 | Events, logs and deployment records | Done — 488 backend + 17 sandbox tests; live run including a real GitHub sync |
 | 5 | Frontend and product design | Done — 491 backend + 76 frontend tests; every screen checked in headless Chromium against real API data |
-| 6 | CI/CD and packaging | Not started |
+| 6 | CI/CD and packaging | Done — CI green on GitHub (6 jobs); image published to GHCR by Deploy; rollout correctly reported as not configured |
 | 7 | Integration and operational hardening | Not started |
 | 8 | Security and quality review | Not started |
 | 9 | Deployment and final verification | Not started — needs a decision (see §6) |
@@ -252,7 +252,7 @@ names only), verification of every claim, final report.
 | # | Item | Blocks | Needed from you |
 |---|---|---|---|
 | B1 | Resolved 2026-11-05: `moeletsimelamu/cloudops-monitor` exists. `gh` is not installed, so CI results are read on github.com | — | Nothing. |
-| B2 | Docker is not installed locally | Local `docker compose up` verification | Nothing. The image is verified in CI. Installing Docker Desktop later would allow local verification. |
+| B2 | Docker is not installed locally | Local `docker compose up` verification | Nothing. The images are built and smoke-tested in CI on every push; they have never been built on this machine. Installing Docker Desktop later would allow local verification. |
 | B3 | Cloud hosting choice | Phase 9 Option B only | A decision at Phase 9, after a price check. |
 
 ## 9. Decision log
@@ -301,3 +301,9 @@ names only), verification of every claim, final report.
 | D40 | No custom time range; logs load in pages rather than a virtualised list | Neither was needed once "Logs ±10 min" links existed and pages were capped at 100 rows. Both add code without answering a new question. |
 | D41 | The timeline fits a phone rather than scrolling inside its panel | Scrolling started at the oldest data, so the newest was off-screen, which is backwards for a monitor. |
 | D42 | Phase 5 browser checks are scratch scripts; they move into the repository as the Playwright journey in Phase 7 | They were needed to verify this phase but depend on a hand-prepared database. Phase 7 makes them repeatable. |
+| D43 | The API process serves the built frontend (`spa.py`) | One process and one image, as planned. Hashed files are cached for good, `index.html` never. Missing assets and unknown API paths stay 404s rather than returning the app shell. |
+| D44 | Uvicorn's own loggers go through the application's handler | A container's output is then one JSON object per line, start-up and shutdown included. CI parses every line. |
+| D45 | `deploy.yml` runs `ci.yml` as its first job, and `ci.yml` does not run on pushes to `main` | Nothing is published unless the full suite passes for that exact commit, and `main` does not run the same checks twice. |
+| D46 | The smoke test is one standard-library Python script | It runs unchanged against Compose in CI, against a local stack, and later against a server, with nothing to install. |
+| D47 | Dependency audits fail CI; development-only npm packages are not audited | A known vulnerability in shipped code should stop delivery. Development tools never reach users, and their advisories would make the check permanently red. |
+| D48 | Test and publish failures are written as annotations | GitHub shows job logs only to signed-in users, and annotations are public. Without them the first Linux test failures could not be read from here at all. |

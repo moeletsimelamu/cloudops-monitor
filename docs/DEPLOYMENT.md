@@ -16,8 +16,8 @@
 | `.github/workflows/deploy.yml` | On every push to `main`: CI, then build, smoke-test and publish the image, then roll out if a server is configured (§5). |
 
 The image is `ghcr.io/moeletsimelamu/cloudops-monitor`, tagged `sha-<first 12 characters of the
-commit>` and `latest`. Container packages on GitHub start out private, so the owner may need to set
-its visibility to public under the repository's *Packages* before others can pull it.
+commit>` and `latest`. It is public: on 2026-11-07 an anonymous request listed its tags, so
+`docker pull` needs no sign-in.
 
 ## 2. Option A — run it on your own machine
 
