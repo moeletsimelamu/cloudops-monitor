@@ -52,7 +52,14 @@ jobs:
         run: mypy
 
       - name: Tests (local servers only; GitHub is faked)
-        run: python -m pytest
+        # Each failure also becomes an annotation, readable on the run page without opening the log.
+        run: |
+          set +e
+          python -m pytest -rfE --tb=line 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -20 | sed 's/^/::error title=pytest::/'
+          grep -E '^/.*:[0-9]+: ' pytest.log | head -20 | sed 's/^/::error title=pytest traceback::/'
+          exit "$status"
 
   sandbox:
     name: Sandbox · lint, types and tests
