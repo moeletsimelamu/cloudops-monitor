@@ -1,0 +1,150 @@
+# Delivery for every push to main (and on demand):
+#   1. the whole CI workflow runs first; nothing below starts unless it passes;
+#   2. the image is built, smoke-tested with the sandbox, and published to GitHub Container Registry;
+#   3. it is rolled out to a server only if one is configured (docs/DEPLOYMENT.md, option B).
+#      Without that configuration the last job says so and changes nothing. It never reports a
+#      rollout that did not happen.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One delivery at a time, in order; a newer push waits rather than cancelling a rollout halfway.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Build, smoke-test and publish the image
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+    env:
+      CLOUDOPS_OPERATOR_TOKEN: deploy-operator-token-${{ github.run_id }}-${{ github.run_attempt }}-0123456789
+      SANDBOX_CONTROL_TOKEN: deploy-sandbox-control-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Image names
+        id: names
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "image=$repository:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          docker build \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t cloudops-monitor:local \
+            -t "${{ steps.names.outputs.image }}" \
+            -t "${{ steps.names.outputs.repository }}:latest" .
+          docker compose build sandbox
+
+      - name: Smoke test the image that will be published
+        run: |
+          docker compose up -d --no-build
+          python3 scripts/smoke.py --base http://127.0.0.1:8300 --sandbox http://127.0.0.1:8310 \
+            --target http://sandbox:8310/health --expect-frontend --expect-docs-off
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs
+
+      - name: Publish to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "${{ steps.names.outputs.image }}"
+          docker push "${{ steps.names.outputs.repository }}:latest"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${{ steps.names.outputs.image }}")"
+          {
+            echo "### Image published"
+            echo
+            echo "- \`${{ steps.names.outputs.image }}\`"
+            echo "- \`${{ steps.names.outputs.repository }}:latest\`"
+            echo "- Digest: \`$digest\`"
+            echo
+            echo "Built from \`$GITHUB_SHA\`, after CI passed and a smoke test of this image with the sandbox."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop
+        if: always()
+        run: docker compose down -v
+
+  rollout:
+    name: Roll out to a server (only when configured)
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+      IMAGE: ${{ needs.publish.outputs.image }}
+    steps:
+      - name: Is a server configured?
+        id: config
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_URL; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Not rolled out::No server is configured (missing:$missing). The image was published; nothing was deployed to a server."
+            {
+              echo "### Not rolled out to a server"
+              echo
+              echo "No server is configured for the \`production\` environment (missing:$missing)."
+              echo "The image was published to GitHub Container Registry. Nothing else changed."
+              echo "See docs/DEPLOYMENT.md, option B, to configure one."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Roll out over SSH
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # The server's deploy script pulls the image and restarts the service (docs/DEPLOYMENT.md).
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cloudops-deploy '$IMAGE'"
+
+      - name: Verify the server is ready
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS "$DEPLOY_URL/api/health/ready" | grep -q '"status":"ready"'; then
+              echo "### Rolled out \`$IMAGE\` to $DEPLOY_URL and it reports ready" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$DEPLOY_URL did not report ready within 150 seconds after the rollout."
+          exit 1
+
+      - name: Remove the key
+        if: always() && steps.config.outputs.configured == 'true'
+        run: rm -f ~/.ssh/deploy_key
