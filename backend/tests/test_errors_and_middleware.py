@@ -155,3 +155,37 @@ def test_database_errors_are_503s_that_say_what_happened(
     assert "UPDATE" not in response.text, "the statement is not shown to the client"
     record = next(r for r in caplog.records if getattr(r, "fields", {}).get("event") == log_event)
     assert (record.exc_info is None) == (code == "database_busy")
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/auth/session"),  # open to anyone
+        ("POST", "/api/applications"),  # read before authentication is checked
+        ("PATCH", "/api/applications/some-app"),
+    ],
+)
+def test_every_path_refuses_an_oversized_body(client: TestClient, method: str, path: str) -> None:
+    body = b'{"token": "' + b"a" * (64 * 1024) + b'"}'
+    response = client.request(method, path, content=body)
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+
+
+def test_an_oversized_body_without_a_length_header_is_refused_as_it_arrives(
+    client: TestClient,
+) -> None:
+    def chunks() -> Iterator[bytes]:
+        yield b'{"token": "'
+        for _ in range(10_000):  # 10 MiB if it were all read
+            yield b"a" * 1024
+        yield b'"}'
+
+    response = client.post("/api/auth/session", content=chunks())
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+
+
+def test_bodies_within_the_limit_are_unaffected(client: TestClient) -> None:
+    response = client.post("/api/auth/session", json={"token": "x" * 512})
+    assert response.status_code == 401

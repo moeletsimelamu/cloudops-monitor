@@ -85,3 +85,17 @@ dd {
     gap: 0;
   }
 }
+
+.sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.sessions p {
+  flex: 1 1 320px;
+  margin: 0;
+}

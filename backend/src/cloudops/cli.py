@@ -77,6 +77,8 @@ def serve(host: str, port: int) -> int:
         return EXIT_STORAGE_UNUSABLE
     # log_config=None: create_app has already routed uvicorn's loggers through the application's
     # handler. The application writes its own access log (path only).
+    # proxy_headers=False: uvicorn would otherwise believe X-Forwarded-* from 127.0.0.1, so any
+    # local process could pose as another client. The app applies CLOUDOPS_TRUSTED_PROXIES itself.
     uvicorn.run(
         app,
         host=host,
@@ -84,6 +86,8 @@ def serve(host: str, port: int) -> int:
         access_log=False,
         log_config=None,
         timeout_graceful_shutdown=15,
+        proxy_headers=False,
+        server_header=False,
     )
     return 0
 

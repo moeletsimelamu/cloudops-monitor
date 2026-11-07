@@ -6,6 +6,7 @@ returns fatal errors (the app refuses to start) and warnings (shown in logs and 
 Neither ever includes a secret value.
 """
 
+import ipaddress
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,14 @@ EXAMPLE_OPERATOR_TOKEN = "replace-with-output-of-cloudops-generate-token"  # noq
 _TARGET_ENTRY = re.compile(
     r"^(?:\[[0-9a-f:.]+\]|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?):[0-9]{1,5}$"
 )
+
+
+def _is_proxy_entry(value: str) -> bool:
+    """An IP address or network, and not "everyone" (0.0.0.0/0, ::/0)."""
+    try:
+        return ipaddress.ip_network(value, strict=False).prefixlen > 0
+    except ValueError:
+        return False
 
 
 def _split_csv(value: object) -> object:
@@ -58,6 +67,9 @@ class Settings(BaseSettings):
     allowed_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "[::1]"]
     )
+    # Addresses (or networks) of reverse proxies whose X-Forwarded-For and X-Forwarded-Proto
+    # headers are believed. Empty: nobody's are, so no client can claim another address.
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Monitoring targets (see docs/SECURITY.md §3)
     target_policy: Literal["allowlist", "public"] = "allowlist"
@@ -91,7 +103,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("allowed_hosts", "allowed_targets", mode="before")
+    @field_validator("allowed_hosts", "allowed_targets", "trusted_proxies", mode="before")
     @classmethod
     def _parse_lists(cls, value: object) -> object:
         return _split_csv(value)
@@ -174,6 +186,13 @@ def check_settings(settings: Settings) -> SettingsReport:
         report.warnings.append(
             "CLOUDOPS_ALLOWED_TARGETS is empty and the target policy is 'allowlist', so no "
             "application can be registered for monitoring yet."
+        )
+
+    bad_proxies = [p for p in settings.trusted_proxies if not _is_proxy_entry(p)]
+    if bad_proxies:
+        report.errors.append(
+            "CLOUDOPS_TRUSTED_PROXIES entries must be the IP addresses or networks of your "
+            f"proxies, such as 172.18.0.0/16, not everyone (invalid: {', '.join(bad_proxies)})."
         )
 
     if not settings.github_api_url.startswith("https://"):

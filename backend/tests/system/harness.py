@@ -9,12 +9,14 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -70,14 +72,20 @@ class Api:
         auth: bool = True,
         bearer: str | None = None,
         timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
+        raw_body: bytes | None = None,
     ) -> Reply:
-        """``auth`` sends the operator token; ``bearer`` another credential (an ingest key)."""
-        headers = {"Content-Type": "application/json"}
+        """``auth`` sends the operator token; ``bearer`` another credential (an ingest key).
+        ``headers`` are added to the request; ``raw_body`` is sent as it is instead of ``body``."""
+        extra = headers or {}
+        headers = {"Content-Type": "application/json", **extra}
         if auth or bearer:
             headers["Authorization"] = f"Bearer {bearer or TOKEN}"
         request = urllib.request.Request(  # noqa: S310 - a local test server
             self.base_url + path,
-            data=json.dumps(body).encode() if body is not None else None,
+            data=raw_body
+            if raw_body is not None
+            else (json.dumps(body).encode() if body is not None else None),
             method=method,
             headers=headers,
         )
@@ -206,6 +214,19 @@ class CloudOpsProcess:
         assert self.process is not None
         self.process.kill()
         self.wait_for_exit()
+        if sys.platform == "win32" and self.database.exists():
+            # Windows reports the process gone before it has released the database files: an
+            # open in the next few tens of milliseconds fails with "disk I/O error", and then
+            # works (measured: 60-80 ms, integrity "ok" every time). A restart is never that fast.
+            wait_until(self._database_opens, 5, "Windows to release the database files", 0.05)
+
+    def _database_opens(self) -> bool:
+        try:
+            with closing(sqlite3.connect(self.database)) as db:
+                db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return True
 
     def _close_log(self) -> None:
         if self._log is not None:

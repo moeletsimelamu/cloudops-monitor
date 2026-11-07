@@ -15,6 +15,7 @@ def test_defaults_are_safe(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.target_policy == "allowlist"
     assert settings.allowed_targets == []
     assert settings.allowed_hosts == ["localhost", "127.0.0.1", "[::1]"]
+    assert settings.trusted_proxies == []  # nobody's forwarded headers are believed
 
 
 def test_lists_accept_comma_separated_environment_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,7 +45,11 @@ def test_example_env_file_loads_and_its_placeholder_token_is_refused() -> None:
 
 
 def test_valid_configuration_has_no_errors(tmp_path: Path) -> None:
-    settings = make_settings(tmp_path, allowed_targets=["localhost:8310", "[::1]:8000"])
+    settings = make_settings(
+        tmp_path,
+        allowed_targets=["localhost:8310", "[::1]:8000"],
+        trusted_proxies=["172.18.0.0/16", "10.0.0.2", "fd00::/64"],
+    )
     assert check_settings(settings).errors == []
 
 
@@ -57,6 +62,10 @@ def test_valid_configuration_has_no_errors(tmp_path: Path) -> None:
         ({"allowed_targets": ["localhost"]}, "invalid: localhost"),
         ({"allowed_targets": ["http://x:80"]}, "must look like host:port"),
         ({"github_api_url": "http://api.github.com"}, "must use https"),
+        ({"trusted_proxies": ["proxy.internal"]}, "invalid: proxy.internal"),
+        ({"trusted_proxies": ["*"]}, "invalid: *"),
+        ({"trusted_proxies": ["10.0.0.1", "0.0.0.0/0"]}, "invalid: 0.0.0.0/0"),
+        ({"trusted_proxies": ["::/0"]}, "invalid: ::/0"),
     ],
 )
 def test_invalid_configuration_is_reported(

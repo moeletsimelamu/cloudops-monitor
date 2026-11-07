@@ -5,6 +5,8 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
 from http import HTTPStatus
 from urllib.parse import urlsplit
 
@@ -132,31 +134,41 @@ class RequestContextMiddleware:
             request_id_var.reset(token)
 
 
-class BodySizeLimitMiddleware:
-    """Refuses oversized request bodies on one path while they are being received.
+@dataclass(frozen=True)
+class BodyLimit:
+    max_bytes: int
+    message: str
 
+
+class BodySizeLimitMiddleware:
+    """Refuses oversized request bodies on every path while they are being received.
+
+    Without it, any client, signed in or not, could make the server hold a request body of any
+    size in memory: the framework reads the whole body before authentication is checked.
     ``Content-Length`` is checked first; the body is also counted as it arrives, because the
     header can be missing (chunked encoding) or wrong.
     """
 
-    def __init__(self, app: ASGIApp, *, path: str, max_bytes: int, message: str) -> None:
+    def __init__(
+        self, app: ASGIApp, *, default: BodyLimit, per_path: Mapping[str, BodyLimit]
+    ) -> None:
         self.app = app
-        self.path = path
-        self.max_bytes = max_bytes
-        self.message = message
+        self.default = default
+        self.per_path = dict(per_path)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] != self.path:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        limit = self.per_path.get(scope["path"], self.default)
 
         declared = Headers(scope=scope).get("content-length")
-        if declared is not None and declared.isdigit() and int(declared) > self.max_bytes:
+        if declared is not None and declared.isdigit() and int(declared) > limit.max_bytes:
             response = error_response(
                 Request(scope),
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 "payload_too_large",
-                self.message,
+                limit.message,
             )
             await response(scope, receive, send)
             return
@@ -168,8 +180,8 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
-                    raise HTTPException(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, self.message)
+                if received > limit.max_bytes:
+                    raise HTTPException(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, limit.message)
             return message
 
         await self.app(scope, counting_receive, send)

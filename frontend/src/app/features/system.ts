@@ -1,19 +1,21 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { catchError, of } from 'rxjs';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
+import { catchError, firstValueFrom, of } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 
-import { ApiService } from '../core/api.service';
+import { ApiError, ApiService, toApiError } from '../core/api.service';
+import { AuthService } from '../core/auth.service';
 import { formatBytes, formatDuration } from '../core/format';
 import { Readiness } from '../core/models';
 import { poll } from '../core/poll';
 import { ClockService } from '../core/preferences.service';
-import { ErrorPanel, Skeleton, TimeText } from '../shared/states';
+import { ConfirmDialog, ErrorPanel, Skeleton, TimeText } from '../shared/states';
 import { Glyph, GlyphShape, GlyphTone } from '../shared/status';
 
 /** Is the monitor itself all right? Secrets appear only as "set" or "not set". */
 @Component({
   selector: 'co-system',
-  imports: [ErrorPanel, Skeleton, TimeText, Glyph],
+  imports: [ConfirmDialog, ErrorPanel, Skeleton, TimeText, Glyph],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './system.html',
   styleUrl: './system.css',
@@ -21,6 +23,10 @@ import { Glyph, GlyphShape, GlyphTone } from '../shared/status';
 export class SystemPage {
   private readonly api = inject(ApiService);
   private readonly clock = inject(ClockService);
+  private readonly router = inject(Router);
+  protected readonly auth = inject(AuthService);
+
+  protected readonly signOutError = signal<ApiError | null>(null);
 
   /** A 503 is an answer here, not a failure: its body says what is not ready. */
   protected readonly readiness = poll(
@@ -71,6 +77,19 @@ export class SystemPage {
       return { shape: 'square', tone: 'fail' };
     }
     return { shape: 'hollow', tone: 'neutral' };
+  }
+
+  /** Ends every session, this browser's too, then goes to the sign-in page. */
+  protected async signOutEverywhere(): Promise<void> {
+    this.signOutError.set(null);
+    try {
+      await firstValueFrom(this.api.signOutEverywhere());
+    } catch (failure) {
+      this.signOutError.set(toApiError(failure));
+      return;
+    }
+    this.auth.markSignedOut();
+    await this.router.navigate(['/sign-in']);
   }
 
   protected word(state: string): string {

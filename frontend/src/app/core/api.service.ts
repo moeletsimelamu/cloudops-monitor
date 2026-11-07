@@ -103,6 +103,11 @@ export class ApiService {
     return this.http.delete<void>('/api/auth/session');
   }
 
+  /** Ends every browser session, this one included. */
+  signOutEverywhere(): Observable<{ ended: number }> {
+    return this.http.delete<{ ended: number }>('/api/auth/sessions');
+  }
+
   overview(): Observable<Overview> {
     return this.http.get<Overview>('/api/overview');
   }

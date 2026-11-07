@@ -317,6 +317,7 @@ export interface SystemConfig {
   operator_token: string;
   session_hours: number;
   allowed_hosts: string[];
+  trusted_proxies: string[];
   target_policy: string;
   allowed_targets: string[];
   worker_enabled: boolean;

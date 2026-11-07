@@ -118,6 +118,16 @@ def test_public_mode_accepts_public_names_and_the_allowlist() -> None:
         ("255.255.255.255", True, True),
         ("::ffff:169.254.169.254", True, True),
         ("not-an-ip", True, True),
+        # IPv6 transition addresses are checked as the IPv4 address they lead to (Phase 8).
+        ("64:ff9b::a9fe:a9fe", True, True),  # NAT64 for 169.254.169.254, even when listed
+        ("64:ff9b::7f00:1", False, True),  # NAT64 for 127.0.0.1
+        ("64:ff9b::a00:5", False, True),  # NAT64 for 10.0.0.5
+        ("64:ff9b::5db8:d822", False, False),  # NAT64 for a public address stays allowed
+        ("::a9fe:a9fe", True, True),  # IPv4-compatible 169.254.169.254
+        ("::7f00:1", False, True),  # IPv4-compatible 127.0.0.1
+        ("2002:a9fe:a9fe::1", True, True),  # 6to4 for 169.254.169.254
+        ("2001:0:4136:e378:8000:63bf:5601:5601", True, True),  # Teredo, client 169.254.169.254
+        ("fec0::1", False, True),  # deprecated site-local
     ],
 )
 def test_address_checks(ip: str, listed: bool, blocked: bool) -> None:

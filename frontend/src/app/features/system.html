@@ -141,6 +141,35 @@
     </section>
   }
 
+  @if (!auth.authDisabled()) {
+    <section class="section" aria-labelledby="sessions-heading">
+      <div class="section-head">
+        <h2 id="sessions-heading">Sessions</h2>
+      </div>
+      <div class="sessions">
+        <p class="small muted">
+          Ends every signed-in browser, this one included, for example after losing a device.
+          Rotating <span class="mono">CLOUDOPS_OPERATOR_TOKEN</span> and restarting also ends them
+          all, and stops scripts that use the old token.
+        </p>
+        <button class="btn danger" type="button" (click)="confirmSignOut.open()">
+          Sign out everywhere
+        </button>
+      </div>
+      @if (signOutError(); as failure) {
+        <co-error what="Sessions were not ended" [error]="failure" [retryable]="false" />
+      }
+      <co-confirm
+        #confirmSignOut
+        title="Sign out every browser?"
+        action="Sign out everywhere"
+        (confirmed)="signOutEverywhere()"
+      >
+        Every browser, this one included, will need the operator token to sign in again.
+      </co-confirm>
+    </section>
+  }
+
   <section class="section" aria-labelledby="config-heading">
     <div class="section-head">
       <h2 id="config-heading">Effective configuration</h2>
@@ -168,6 +197,10 @@
         <div>
           <dt>Allowed host names</dt>
           <dd class="mono">{{ data.allowed_hosts.join(', ') }}</dd>
+        </div>
+        <div>
+          <dt>Trusted proxies</dt>
+          <dd class="mono">{{ data.trusted_proxies.join(', ') || 'none' }}</dd>
         </div>
         <div>
           <dt>Target policy</dt>

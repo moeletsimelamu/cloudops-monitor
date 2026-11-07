@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, closing
 
 from fastapi import FastAPI
 from sqlalchemy.exc import DBAPIError
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from cloudops import __version__
 from cloudops.api import (
@@ -33,6 +34,7 @@ from cloudops.errors import register_error_handlers
 from cloudops.ingest.logs import MAX_BODY_BYTES, IngestRateLimiter
 from cloudops.logging_setup import configure_logging
 from cloudops.middleware import (
+    BodyLimit,
     BodySizeLimitMiddleware,
     HostAndOriginGuardMiddleware,
     RequestContextMiddleware,
@@ -42,6 +44,9 @@ from cloudops.monitoring.worker import MonitoringWorker
 from cloudops.spa import register_spa
 
 logger = logging.getLogger(__name__)
+
+# Every operator request is a small JSON object; log batches have their own, larger limit.
+MAX_REQUEST_BODY_BYTES = 64 * 1024
 
 
 class StorageError(RuntimeError):
@@ -140,12 +145,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # headers also apply to responses produced by the guard.
     app.add_middleware(
         BodySizeLimitMiddleware,
-        path="/api/ingest/logs",
-        max_bytes=MAX_BODY_BYTES,
-        message=f"A log batch can be at most {MAX_BODY_BYTES // 1024} KiB. Send smaller batches.",
+        default=BodyLimit(
+            MAX_REQUEST_BODY_BYTES,
+            f"A request body can be at most {MAX_REQUEST_BODY_BYTES // 1024} KiB.",
+        ),
+        per_path={
+            "/api/ingest/logs": BodyLimit(
+                MAX_BODY_BYTES,
+                f"A log batch can be at most {MAX_BODY_BYTES // 1024} KiB. Send smaller batches.",
+            )
+        },
     )
     app.add_middleware(HostAndOriginGuardMiddleware, allowed_hosts=settings.allowed_hosts)
     app.add_middleware(RequestContextMiddleware)
+    if settings.trusted_proxies:
+        # Outermost, so everything inside sees the client's address and scheme as the proxy
+        # reported them: the sign-in limit counts per client, and cookies are Secure behind TLS.
+        app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
     for router in (
         health.router,
         auth.router,

@@ -34,6 +34,19 @@ _NAMED_VALUE = re.compile(
 )
 
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # PEM private keys, through the END line, or to the end of the text if it was cut short.
+    (
+        re.compile(
+            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"
+            r"(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY-----|.*\Z)",
+            re.DOTALL,
+        ),
+        REDACTED,
+    ),
+    # Slack, Stripe (secret and restricted) and Google API keys.
+    (re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"), REDACTED),
+    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"), REDACTED),
+    (re.compile(r"\bAIza[A-Za-z0-9_-]{35}"), REDACTED),
     # Authorization header values.
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), rf"\1 {REDACTED}"),
     # JSON Web Tokens (three base64url segments, the first starting with '{"').
@@ -71,14 +84,20 @@ def is_sensitive_key(key: str) -> bool:
 def redact_attributes(
     attributes: Mapping[str, object], known_secrets: Iterable[str] = ()
 ) -> dict[str, object]:
-    """Mask values under sensitive keys and credential-shaped strings in the other values."""
+    """Mask values under sensitive keys and credential-shaped strings in the other values, at
+    any depth: CloudOps's own log records carry lists and nested objects."""
     secrets = tuple(known_secrets)
-    result: dict[str, object] = {}
-    for key, value in attributes.items():
-        if is_sensitive_key(key):
-            result[key] = REDACTED
-        elif isinstance(value, str):
-            result[key] = redact_text(value, secrets)
-        else:
-            result[key] = value
-    return result
+    return {
+        key: REDACTED if is_sensitive_key(key) else _redact_value(value, secrets)
+        for key, value in attributes.items()
+    }
+
+
+def _redact_value(value: object, secrets: tuple[str, ...]) -> object:
+    if isinstance(value, str):
+        return redact_text(value, secrets)
+    if isinstance(value, Mapping):
+        return redact_attributes({str(k): v for k, v in value.items()}, secrets)
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_redact_value(item, secrets) for item in value]
+    return value

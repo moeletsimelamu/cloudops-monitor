@@ -50,10 +50,38 @@ class Target:
     is_ip_literal: bool
 
 
-def _unwrap(address: IPAddress) -> IPAddress:
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return address.ipv4_mapped
-    return address
+# NAT64's well-known prefix: 64:ff9b::a.b.c.d is translated to the IPv4 address a.b.c.d by a NAT64
+# gateway, so 64:ff9b::a9fe:a9fe reaches 169.254.169.254 on an IPv6-only network that has one.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _embedded_ipv4(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 transition address leads to, if it has one."""
+    if address in _NAT64:
+        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+    if address.sixtofour is not None:  # 2002:a.b.c.d::/48
+        return address.sixtofour
+    if address.teredo is not None:  # 2001::/32, (server, client)
+        return address.teredo[1]
+    if 1 < int(address) < 2**32:  # deprecated IPv4-compatible form ::a.b.c.d
+        return ipaddress.IPv4Address(int(address))
+    return None
+
+
+def _forms(address: IPAddress) -> tuple[IPAddress, ...]:
+    """Every address a connection to ``address`` may end up at, all of which are checked.
+
+    An IPv4-mapped address (::ffff:a.b.c.d) is only ever the IPv4 address. A transition address
+    is checked as itself and as the IPv4 address inside it, so either form being blocked blocks
+    it: Python's ``is_global`` treats 64:ff9b::7f00:1 (NAT64 for 127.0.0.1) as public.
+    """
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return (address.ipv4_mapped,)
+        embedded = _embedded_ipv4(address)
+        if embedded is not None:
+            return (address, embedded)
+    return (address,)
 
 
 def _parse_ip(host: str) -> IPAddress | None:
@@ -165,17 +193,20 @@ class TargetPolicy:
         reason = always_blocked_reason(address)
         if reason or listed:
             return reason
-        unwrapped = _unwrap(address)
-        if not unwrapped.is_global:
-            return "a private, loopback or reserved address"
+        for form in _forms(address):
+            # Site-local (fec0::/10) is deprecated but still routed by some networks, and
+            # Python counts it as global.
+            site_local = isinstance(form, ipaddress.IPv6Address) and form.is_site_local
+            if not form.is_global or site_local:
+                return "a private, loopback or reserved address"
         return None
 
 
 def always_blocked_reason(address: IPAddress) -> str | None:
-    unwrapped = _unwrap(address)
-    for network in _ALWAYS_BLOCKED:
-        if unwrapped.version == network.version and unwrapped in network:
-            if unwrapped.is_link_local:
-                return "a link-local address (this includes cloud metadata services)"
-            return "a reserved, multicast or metadata-service address"
+    for form in _forms(address):
+        for network in _ALWAYS_BLOCKED:
+            if form.version == network.version and form in network:
+                if form.is_link_local:
+                    return "a link-local address (this includes cloud metadata services)"
+                return "a reserved, multicast or metadata-service address"
     return None

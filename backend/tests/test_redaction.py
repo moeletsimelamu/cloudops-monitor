@@ -8,6 +8,8 @@ from cloudops.domain.redaction import (
 )
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+PEM_BEGIN = "-----BEGIN " + "RSA PRIVATE KEY-----"
+PEM_END = "-----END " + "RSA PRIVATE KEY-----"
 
 
 @pytest.mark.parametrize(
@@ -24,6 +26,12 @@ JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_X
         ("login failed password=hunter2 for user", "hunter2"),
         ('{"api_key": "k-123456"}', "k-123456"),
         ("client_secret: 's3cr3t value'", "s3cr3t value"),
+        # Added in Phase 8. Built from parts so no complete key-shaped string is in the source.
+        (f"key:\n{PEM_BEGIN}\nMIIEowIBAAKCAQEA0abc\n{PEM_END} done", "MIIEowIBAAKCAQEA0abc"),
+        (f"cut short: {PEM_BEGIN}\nMIIEowIBAAKCAQEA0abc\nQ2xvdWRP", "Q2xvdWRP"),
+        ("slack " + "xox" + "b-1234567890-abcdefghij", "1234567890-abcdefghij"),
+        ("stripe " + "sk_" + "live_" + "a1B2" * 6, "a1B2" * 6),
+        ("google " + "AI" + "za" + "Sy" + "a1B2c3" * 5 + "d4e", "a1B2c3" * 5),
     ],
 )
 def test_credentials_are_masked_in_text(text: str, secret: str) -> None:
@@ -84,3 +92,21 @@ def test_attributes_mask_sensitive_keys_and_credential_values_but_keep_types() -
         "note": f"retry with Bearer {REDACTED}",
         "ratio": 0.5,
     }
+
+
+def test_nested_values_are_redacted_at_any_depth() -> None:
+    token = "ghp_" + "a1B2" * 9
+    result = redact_attributes(
+        {
+            "errors": [f"CLOUDOPS_GITHUB_TOKEN={token}", "fine"],
+            "request": {"headers": {"Authorization": "Bearer abcdefghijk"}, "path": "/x"},
+            "pairs": [("a", "configured-secret-value")],
+            "count": 3,
+        },
+        ["configured-secret-value"],
+    )
+    assert token not in str(result)
+    assert "configured-secret-value" not in str(result)
+    assert result["errors"] == [f"CLOUDOPS_GITHUB_TOKEN={REDACTED}", "fine"]
+    assert result["request"] == {"headers": {"Authorization": REDACTED}, "path": "/x"}
+    assert result["count"] == 3

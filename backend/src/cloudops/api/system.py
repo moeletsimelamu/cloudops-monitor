@@ -39,6 +39,7 @@ class EffectiveConfig(BaseModel):
     operator_token: SecretState
     session_hours: int
     allowed_hosts: list[str]
+    trusted_proxies: list[str]
     target_policy: str
     allowed_targets: list[str]
     worker_enabled: bool
@@ -141,6 +142,7 @@ def effective_config(request: Request, settings: SettingsDep) -> EffectiveConfig
         operator_token=_state(settings.operator_token),
         session_hours=settings.session_hours,
         allowed_hosts=settings.allowed_hosts,
+        trusted_proxies=settings.trusted_proxies,
         target_policy=settings.target_policy,
         allowed_targets=settings.allowed_targets,
         worker_enabled=settings.worker_enabled,

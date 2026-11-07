@@ -2,6 +2,7 @@ import { HttpTestingController, TestRequest } from '@angular/common/http/testing
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 
+import { AuthService } from '../core/auth.service';
 import {
   TEST_PROVIDERS,
   application,
@@ -19,6 +20,7 @@ import { EventsPage } from './events';
 import { LogsPage } from './logs';
 import { OverviewPage } from './overview';
 import { SignInPage } from './sign-in';
+import { SystemPage } from './system';
 
 type Http = HttpTestingController;
 
@@ -652,5 +654,54 @@ describe('SignInPage', () => {
     await settle();
     await settle();
     expect(navigate).toHaveBeenCalledWith('/overview');
+  });
+});
+
+describe('SystemPage: sign out everywhere', () => {
+  async function render(
+    authMode: 'token' | 'disabled',
+  ): Promise<{ element: HTMLElement; settle: () => Promise<void> }> {
+    TestBed.inject(AuthService).session.set({
+      auth_mode: authMode,
+      authenticated: true,
+      expires_at: null,
+    });
+    const fixture = TestBed.createComponent(SystemPage);
+    await fixture.whenStable();
+    return { element: fixture.nativeElement, settle: () => fixture.whenStable() };
+  }
+
+  function signOutButton(element: HTMLElement): HTMLButtonElement | undefined {
+    return Array.from(element.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Sign out everywhere'),
+    );
+  }
+
+  it('asks first, then ends every session and goes to the sign-in page', async () => {
+    const { element, settle } = await render('token');
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    const dialog = element.querySelector('co-confirm dialog') as HTMLDialogElement;
+    dialog.showModal = vi.fn();
+    dialog.close = vi.fn();
+
+    signOutButton(element)?.click();
+    expect(dialog.showModal).toHaveBeenCalled();
+    expect(http().match('/api/auth/sessions')).toHaveLength(0); // nothing until confirmed
+
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Sign out everywhere'),
+    ) as HTMLButtonElement;
+    confirm.click();
+    const request = http().expectOne('/api/auth/sessions');
+    expect(request.request.method).toBe('DELETE');
+    request.flush({ ended: 2 });
+    await settle();
+    expect(TestBed.inject(AuthService).signedIn()).toBe(false);
+    expect(navigate).toHaveBeenCalledWith(['/sign-in']);
+  });
+
+  it('is not offered when authentication is disabled', async () => {
+    const { element } = await render('disabled');
+    expect(signOutButton(element)).toBeUndefined();
   });
 });

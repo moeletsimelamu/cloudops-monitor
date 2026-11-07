@@ -137,6 +137,8 @@ async def test_dns_failure() -> None:
         ["10.0.0.7"],  # a public name that now points inside the network (DNS rebinding)
         ["93.184.216.34", "127.0.0.1"],  # one bad address is enough
         ["169.254.169.254"],
+        ["64:ff9b::a9fe:a9fe"],  # the metadata service through a NAT64 gateway
+        ["2606:2800:220:1:248:1893:25c8:1946", "64:ff9b::7f00:1"],  # NAT64 loopback
     ],
 )
 async def test_rebinding_to_internal_addresses_is_blocked_at_connection_time(
@@ -165,12 +167,17 @@ async def test_allowlisted_name_may_resolve_to_loopback_but_never_to_metadata(
     async def to_metadata(host: str, port: int) -> list[str]:
         return ["169.254.169.254"]
 
+    async def to_metadata_by_nat64(host: str, port: int) -> list[str]:
+        return ["64:ff9b::a9fe:a9fe"]
+
     policy = TargetPolicy("allowlist", [f"sandbox:{server.port}"])
     url = f"http://sandbox:{server.port}/ok"
     ok = await probe(url, timeout_seconds=2, policy=policy, resolver=to_loopback)
     assert ok.status_code == 200
     blocked = await probe(url, timeout_seconds=2, policy=policy, resolver=to_metadata)
     assert blocked.error == ProbeError.TARGET_BLOCKED
+    nat64 = await probe(url, timeout_seconds=2, policy=policy, resolver=to_metadata_by_nat64)
+    assert nat64.error == ProbeError.TARGET_BLOCKED
 
 
 async def test_slow_resolver_counts_as_a_timeout() -> None:
