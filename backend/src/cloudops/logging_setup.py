@@ -91,6 +91,13 @@ def configure_logging(level: str, log_format: str, known_secrets: Iterable[str] 
     handler.addFilter(_ContextFilter())
     handler._cloudops = True  # type: ignore[attr-defined]
     root.addHandler(handler)
+    # Uvicorn's own messages (start-up, shutdown, protocol errors) go through the same handler, so
+    # a container's output is one format. Its default configuration gives them separate text
+    # handlers.
+    for name in ("uvicorn", "uvicorn.error"):
+        server_logger = logging.getLogger(name)
+        server_logger.handlers.clear()
+        server_logger.propagate = True
     # The application writes its own access log line (path only, no query string).
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     # The HTTP client logs every request URL at INFO; probes and GitHub calls are logged by

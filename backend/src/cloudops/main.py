@@ -37,6 +37,7 @@ from cloudops.middleware import (
 )
 from cloudops.monitoring.runner import CheckRunner
 from cloudops.monitoring.worker import MonitoringWorker
+from cloudops.spa import register_spa
 
 logger = logging.getLogger(__name__)
 
@@ -129,4 +130,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ingest.router,
     ):
         app.include_router(router, prefix="/api")
+    if settings.static_dir is not None:
+        register_spa(app, settings.static_dir)  # last: it matches every remaining GET path
     return app
