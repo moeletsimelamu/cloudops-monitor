@@ -1,0 +1,46 @@
+# CloudOps Monitor with the sandbox as a target to watch, on this machine.
+#
+#   1. Put two values in a file named .env next to this one (it is git-ignored):
+#        CLOUDOPS_OPERATOR_TOKEN=<a random string of at least 32 characters>
+#        SANDBOX_CONTROL_TOKEN=<another random string>
+#      Either can come from: python -c "import secrets; print(secrets.token_urlsafe(32))"
+#   2. docker compose up --build
+#   3. Open http://localhost:8300 and register http://sandbox:8310/health.
+#
+# Both ports are published on 127.0.0.1 only. See docs/DEPLOYMENT.md.
+name: cloudops
+
+services:
+  cloudops:
+    build:
+      context: .
+    image: cloudops-monitor:local
+    ports:
+      - "127.0.0.1:8300:8300"
+    environment:
+      CLOUDOPS_OPERATOR_TOKEN: ${CLOUDOPS_OPERATOR_TOKEN:?Set CLOUDOPS_OPERATOR_TOKEN in .env next to compose.yaml}
+      # "cloudops" is how the sandbox reaches this service when it ships its logs.
+      CLOUDOPS_ALLOWED_HOSTS: localhost,127.0.0.1,[::1],cloudops
+      CLOUDOPS_ALLOWED_TARGETS: sandbox:8310
+      CLOUDOPS_GITHUB_TOKEN: ${CLOUDOPS_GITHUB_TOKEN:-}
+    volumes:
+      - cloudops-data:/data
+    restart: unless-stopped
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    image: cloudops-sandbox:local
+    ports:
+      - "127.0.0.1:8310:8310"
+    environment:
+      SANDBOX_CONTROL_TOKEN: ${SANDBOX_CONTROL_TOKEN:?Set SANDBOX_CONTROL_TOKEN in .env next to compose.yaml}
+      SANDBOX_CLOUDOPS_URL: http://cloudops:8300
+      # Optional: an ingest key created for the sandbox in CloudOps, so it ships its request logs.
+      SANDBOX_INGEST_KEY: ${SANDBOX_INGEST_KEY:-}
+      SANDBOX_TRAFFIC_RPS: ${SANDBOX_TRAFFIC_RPS:-0}
+    restart: unless-stopped
+
+volumes:
+  cloudops-data:

@@ -1,0 +1,35 @@
+# Only what the images need: backend and sandbox source with their pins, frontend source.
+# Never data, secrets, local environments or build output.
+.git
+.github
+.claude
+docs
+scripts
+**/__pycache__
+**/*.pyc
+
+# Secrets and local configuration
+.env
+.env.*
+**/.env
+
+# Runtime data
+**/data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Local environments, caches and build output
+**/.venv
+**/*.egg-info
+**/build
+backend/tests
+sandbox/tests
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+frontend/node_modules
+frontend/dist
+frontend/.angular
+frontend/coverage
+frontend/test-results
