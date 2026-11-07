@@ -66,18 +66,30 @@ jobs:
         if: failure()
         run: docker compose logs
 
-      - name: Publish to GitHub Container Registry
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish
+        # Errors become annotations, which are readable on the run page without opening the log.
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.names.outputs.image }}"
-          docker push "${{ steps.names.outputs.repository }}:latest"
-          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${{ steps.names.outputs.image }}")"
+          publish() {
+            if ! docker push "$1" > push.log 2>&1; then
+              cat push.log
+              echo "::error title=docker push $1::$(tail -n 3 push.log | tr '\n' ' ')"
+              exit 1
+            fi
+            cat push.log
+          }
+          publish "${{ steps.names.outputs.image }}"
+          # The registry's digest, from the push itself: the local image store may not record it.
+          digest="$(grep -oE 'digest: sha256:[0-9a-f]{64}' push.log | head -n 1 | cut -d' ' -f2 || true)"
+          publish "${{ steps.names.outputs.repository }}:latest"
           {
             echo "### Image published"
             echo
             echo "- \`${{ steps.names.outputs.image }}\`"
             echo "- \`${{ steps.names.outputs.repository }}:latest\`"
-            echo "- Digest: \`$digest\`"
+            echo "- Digest: \`${digest:-not reported}\`"
             echo
             echo "Built from \`$GITHUB_SHA\`, after CI passed and a smoke test of this image with the sandbox."
           } >> "$GITHUB_STEP_SUMMARY"
