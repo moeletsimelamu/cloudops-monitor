@@ -1,8 +1,8 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phases 2 to 6 complete: the backend described here and the Angular frontend are
-> implemented and tested, and run as one container image in which the API process also serves the
-> built frontend (`spa.py`). Packaging and the pipeline are in [DEPLOYMENT.md](DEPLOYMENT.md). Differences from the design are
+> **Status:** Phases 2 to 7 complete: the backend described here and the Angular frontend are
+> implemented and tested, including as a running system and through a browser, and run as one
+> container image in which the API process also serves the built frontend (`spa.py`). Packaging and the pipeline are in [DEPLOYMENT.md](DEPLOYMENT.md). Differences from the design are
 > recorded in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
@@ -436,7 +436,17 @@ environment.
 about 43k in 30 days. Each row is around 150 bytes, so 10 applications for 30 days is about 65 MB.
 Defaults: checks are kept for 30 days, events for 90 days, logs for 7 days with a 200k-row cap,
 deployments indefinitely (they are small). An hourly retention job deletes in batches to keep
-write locks short.
+write locks short, application by application so each batch is an index range search, and runs
+beside the scheduler rather than in its way. Measured in Phase 7: 288,000 of 1.15 million checks
+deleted in about 7 s, with the API answering throughout.
+
+**Failures of the database itself.** A request that cannot write because another connection holds
+the write lock for longer than the 5-second busy timeout gets `503 database_busy` with
+`Retry-After: 5`; any other database error is `503 database_unavailable`. Reads carry on (the
+write-ahead log lets readers work during a write). The worker keeps trying each second; if it
+cannot complete a tick for 30 s, readiness reports `worker: error`, and recovers by itself once the
+lock is released. At start-up, a damaged database file or a data directory the server cannot write
+stops it with one critical log record naming the file (`database.unusable`, exit status 3).
 
 **Schema changes** go through **Alembic** migrations, which are applied at start-up (single-process
 deployment) or with `cloudops db upgrade`. SQLite batch mode handles column changes. Migrations run

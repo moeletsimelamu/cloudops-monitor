@@ -175,7 +175,11 @@ exceptions return a generic 500 with the request ID. Stack traces go only to the
   above in what ships to the browser. Development-only npm tools are not audited in CI; on
   2026-11-07 they had 16 moderate advisories and none high.
 - Publishing uses the workflow's own short-lived `GITHUB_TOKEN` with `packages: write` for that
-  job only. A server rollout, if ever configured, uses a deploy-only SSH key and a pinned host key
+  job only. CI's token also has `actions: read`, so the container smoke test can read this
+  repository's workflow runs; CI checks it never appears in the server's logs.
+- A setting the server cannot parse is reported by variable name only: the rejected value is never
+  repeated, in case it was a secret. Any token present in the environment is masked in that line
+  as well. A server rollout, if ever configured, uses a deploy-only SSH key and a pinned host key
   from the `production` environment.
 - Security response headers: CSP without `unsafe-inline` for scripts, `X-Content-Type-Options`,
   `Referrer-Policy`, `frame-ancestors 'none'`.

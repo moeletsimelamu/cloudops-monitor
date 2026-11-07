@@ -5,11 +5,13 @@ together health checks, deployment history, structured logs and operational even
 so that when something breaks you can see **what is broken, since when, what changed and what the
 evidence says**.
 
-> **Project status: Phase 5 of 10.** The backend and the web interface work together locally: it
+> **Project status: Phase 7 of 10.** The backend and the web interface work together locally: it
 > checks application health on a schedule, tracks state and incidents, records events, ingests and
 > searches structured logs, reads deployment history from GitHub Actions, and shows all of it in an
-> Angular interface. It is tested against a controllable sandbox service, packaged as a container
-> image, and checked and published by GitHub Actions. It has not been deployed to a server.
+> Angular interface. It is tested against a controllable sandbox service, as a running system
+> (restarts, kills, a locked database, 40 days of data) and through a browser, packaged as a
+> container image, and checked and published by GitHub Actions. It has not been deployed to a
+> server.
 > Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
@@ -109,10 +111,14 @@ copy ..\.env.example .env
 Put the generated token in `CLOUDOPS_OPERATOR_TOKEN` in `backend/.env`, then:
 
 ```powershell
-.venv\Scripts\python -m uvicorn cloudops.main:create_app --factory --port 8300
+.venv\Scripts\cloudops serve --port 8300
 ```
 
-Checks used during development and in CI:
+A setting it cannot use stops it at once with one log line naming the variable (exit status 2).
+
+Checks used during development and in CI. The full suite includes system tests that start the real
+server as a separate process (restarts, a locked database, retention on 1.15 million checks) and
+takes about five minutes; `-m "not system"` leaves them out:
 
 ```powershell
 .venv\Scripts\python -m pytest
@@ -152,6 +158,18 @@ npm run format:check
 
 ```powershell
 npm run build
+```
+
+Browser end-to-end tests (Playwright) run the production build against the real server and the
+sandbox, each started for the run with an empty database. They need the backend and the sandbox
+installed in `backend/.venv` (or the Python named in `E2E_PYTHON`) and a build:
+
+```powershell
+npx playwright install chromium
+```
+
+```powershell
+npm run build; npm run e2e
 ```
 
 ## Trying it with the sandbox
