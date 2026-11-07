@@ -1,8 +1,8 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phases 2 to 5 complete: the backend described here and the Angular frontend are
-> implemented and tested. Serving the built frontend from the API process comes with packaging in
-> Phase 6; until then it runs from `ng serve` with a proxy to the API. Differences from the design are
+> **Status:** Phases 2 to 6 complete: the backend described here and the Angular frontend are
+> implemented and tested, and run as one container image in which the API process also serves the
+> built frontend (`spa.py`). Packaging and the pipeline are in [DEPLOYMENT.md](DEPLOYMENT.md). Differences from the design are
 > recorded in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system

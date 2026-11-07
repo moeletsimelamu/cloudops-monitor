@@ -5,8 +5,8 @@
 > guard), secrets handling (§5: blank and placeholder tokens refused, `set`/`not set` display,
 > redaction of CloudOps's own logs), the error envelope (§8) and security headers (§9). The
 > target policy (§3) followed in Phase 3, and ingest keys, limits and redaction (§7) and the
-> read-only GitHub integration (§5, §6) in Phase 4. Container controls are still planned. Phase 8
-> reviews every item.
+> read-only GitHub integration (§5, §6) in Phase 4, and container controls and dependency audits
+> (§9) in Phase 6. Phase 8 reviews every item.
 
 ## 1. Deployment assumptions
 
@@ -152,7 +152,8 @@ follows only `https://` links from event details.
 
 Every request and ingest payload has a Pydantic schema with bounds: URL rules (above), slugs
 `^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`, intervals 15–3600 s, timeouts 1–30 s, page size 1–200, time
-ranges in ISO-8601 with `from < to` and at most 30 days for history queries (7 days for logs),
+ranges in ISO-8601 with `from < to` and at most 30 days for history queries (7 days for logs;
+deployment history may be left open-ended, and is paged),
 severity and outcome enums, and `owner/repo` and workflow file name patterns.
 
 All errors use one envelope: `{"error": {"code", "message", "details", "request_id"}}`. Unhandled
@@ -160,11 +161,22 @@ exceptions return a generic 500 with the request ID. Stack traces go only to the
 
 ## 9. Containers and dependencies
 
-- Multi-stage image, `python:3.14-slim` runtime, non-root user, read-only application files, data
-  only in a volume. No build tools in the final image.
+- Multi-stage image, `python:3.14-slim` runtime, non-root user (uid 10001), application files
+  owned by root so the server cannot change them, data only in the `/data` volume. No build tools,
+  source tree, tests, docs or `.env` files in the final image. CI checks each of these on the built
+  image rather than trusting the Dockerfile.
+- Ports are published on `127.0.0.1` in `compose.yaml` and in the documented `docker run` command.
+  Anything reachable from other machines needs a TLS proxy in front (DEPLOYMENT.md §6).
+- The images take secrets only at run time. CI uses throwaway tokens made from the run ID and
+  checks that the operator token never appears in the container's logs.
 - Direct dependencies are pinned in `pyproject.toml` and `package.json`. Transitive dependencies are
-  pinned in `constraints.txt` and `package-lock.json`. CI runs `pip-audit` and `npm audit
-  --omit=dev` as reporting checks.
+  pinned in `constraints.txt` and `package-lock.json`. CI fails if `pip-audit` finds a known
+  vulnerability in any pinned Python package, or `npm audit --omit=dev` one of moderate severity or
+  above in what ships to the browser. Development-only npm tools are not audited in CI; on
+  2026-11-07 they had 16 moderate advisories and none high.
+- Publishing uses the workflow's own short-lived `GITHUB_TOKEN` with `packages: write` for that
+  job only. A server rollout, if ever configured, uses a deploy-only SSH key and a pinned host key
+  from the `production` environment.
 - Security response headers: CSP without `unsafe-inline` for scripts, `X-Content-Type-Options`,
   `Referrer-Policy`, `frame-ancestors 'none'`.
 

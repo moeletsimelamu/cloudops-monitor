@@ -238,7 +238,7 @@ restart; database locked or unavailable; invalid configuration at start-up; cloc
 handling; retention under load (seeded 30 days of checks).
 *Done when:* every bullet in brief §Phase 7 has a test or a recorded manual run.
 
-**8 — Security and quality review.** SSRF review (incl. rebinding test), auth review, secret
+**8 — Security and quality review.** SSRF review (incl. rebinding test), auth review (including a way to end every session when the operator token is rotated, found in Phase 6), secret
 scanning of history, redaction, container configuration, dependency audit, accessibility (axe +
 manual), responsive layouts; complete SECURITY.md §10 and REVIEW.md.
 

@@ -8,8 +8,9 @@ evidence says**.
 > **Project status: Phase 5 of 10.** The backend and the web interface work together locally: it
 > checks application health on a schedule, tracks state and incidents, records events, ingests and
 > searches structured logs, reads deployment history from GitHub Actions, and shows all of it in an
-> Angular interface. It is tested against a controllable sandbox service. Docker packaging, CI and
-> deployment are not built yet. Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
+> Angular interface. It is tested against a controllable sandbox service, packaged as a container
+> image, and checked and published by GitHub Actions. It has not been deployed to a server.
+> Progress is tracked in [docs/PLAN.md](docs/PLAN.md).
 
 This is the third project in a portfolio, after
 [OpsHub](https://github.com/moeletsimelamu/opshub) (IT service desk, ASP.NET Core + Angular) and
@@ -67,6 +68,25 @@ ingest endpoint. Deployment records are pulled from the GitHub REST API. See
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, health-check classification and state machine, events, logs, deployments, data model |
 | [docs/DESIGN.md](docs/DESIGN.md) | Interface principles, visual identity, screens, accessibility, responsive behaviour |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, SSRF controls, authentication, secrets, logging hygiene |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running the container image and Compose setup, operating it, the CI/CD pipeline, the server option |
+
+## Running it with Docker
+
+With Docker installed, CloudOps Monitor and the sandbox start together. Put two random values in a
+file named `.env` next to `compose.yaml`:
+
+```
+CLOUDOPS_OPERATOR_TOKEN=<at least 32 random characters>
+SANDBOX_CONTROL_TOKEN=<another random value>
+```
+
+```bash
+docker compose up --build -d
+```
+
+Then open http://localhost:8300, sign in with the operator token and register
+`http://sandbox:8310/health`. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the image on its own,
+backups, upgrades and the pipeline.
 
 ## Development setup (backend)
 
@@ -180,4 +200,4 @@ limit of 60 requests an hour per IP address, so a network with other GitHub API 
 up. A fine-grained token with *Actions: read* (`CLOUDOPS_GITHUB_TOKEN`) avoids that. CloudOps only
 ever reads from GitHub: it cannot start a deployment.
 
-Docker, CI/CD and deployment instructions will be added as each part is built and verified.
+Running it on a server is not set up yet; [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) says what it would take.
