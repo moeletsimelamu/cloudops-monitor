@@ -55,6 +55,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # Inside the container the server listens on all interfaces. Publish the port on the host's
 # loopback (-p 127.0.0.1:8300:8300) unless a TLS-terminating proxy is in front of it.
-# The application writes its own access log, hence --no-access-log.
-CMD ["uvicorn", "cloudops.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8300", \
-     "--no-access-log", "--timeout-graceful-shutdown", "15"]
+# `cloudops serve` runs uvicorn with the application's own access log and a 15 s graceful
+# shutdown; an invalid configuration or unusable database ends it with one clear log line.
+CMD ["cloudops", "serve", "--host", "0.0.0.0", "--port", "8300"]

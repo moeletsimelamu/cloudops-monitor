@@ -8,8 +8,10 @@ one, from SANDBOX_CONTROL_TOKEN. ``--target`` is the sandbox's health URL as Clo
 Docker Compose that is the service name, which must be in CLOUDOPS_ALLOWED_TARGETS.
 
 Standard library only, so it runs anywhere Python does. It creates one application, takes it through
-healthy -> degraded -> recovered, ships one log entry, and removes the application again. Exits
-non-zero at the first failed step.
+healthy -> degraded -> recovered, ships one log entry, and removes the application again. With
+``--github-repo owner/name --github-workflow file.yml`` it also reads that workflow's real runs from
+GitHub as deployment records (the server needs network access to GitHub, and CLOUDOPS_GITHUB_TOKEN
+to avoid the anonymous rate limit). Exits non-zero at the first failed step.
 """
 
 import argparse
@@ -94,6 +96,51 @@ def check_now(api: Client, slug: str) -> dict[str, Any]:
     status, body, text = api.call("POST", f"/api/applications/{slug}/checks")
     expect(status == 201, f"Check now returned HTTP {status}: {text[:300]}")
     return dict(body)
+
+
+def check_deployment_records(api: Client, target: str, repo: str, workflow: str) -> None:
+    """Register an application whose deployments are this repository's workflow runs, sync it,
+    and check the records are real runs: GitHub run URLs and run numbers, from GitHub itself."""
+    slug = f"smoke-gh-{uuid.uuid4().hex[:8]}"
+    status, _, text = api.call(
+        "POST",
+        "/api/applications",
+        {
+            "slug": slug,
+            "name": "Smoke deployments",
+            "environment": "smoke",
+            "check_url": target,  # an allowed target; it is not checked (monitoring is off)
+            "monitoring_enabled": False,
+            "github_repo": repo,
+            "deploy_workflow": workflow,
+        },
+    )
+    expect(status == 201, f"Registering with a GitHub source returned HTTP {status}: {text[:300]}")
+    try:
+        deadline = time.monotonic() + 60
+        items: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            status, result, text = api.call("POST", f"/api/applications/{slug}/deployments/sync")
+            if status == 200:
+                expect(
+                    result["status"] in ("synced", "not_modified"),
+                    f"Sync failed: {result.get('error_kind')}: {result.get('message')}",
+                )
+            elif status not in (409, 429):  # a sync already running, or one moments ago
+                raise SmokeError(f"Sync returned HTTP {status}: {text[:300]}")
+            _, page, _ = api.call("GET", f"/api/deployments?application={slug}&limit=20")
+            items = page["items"]
+            if items:
+                break
+            time.sleep(6)
+        expect(bool(items), f"No deployment records were read for {repo} ({workflow})")
+        run_url = f"https://github.com/{repo}/actions/runs/"
+        for item in items:
+            expect(str(item["url"]).startswith(run_url), f"Not a run of {repo}: {item['url']}")
+            expect(item["run_number"] is not None and len(item["commit_sha"]) == 40, str(item))
+        step(f"{len(items)} deployment records read from GitHub for {repo} ({workflow})")
+    finally:
+        api.call("DELETE", f"/api/applications/{slug}")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -210,6 +257,9 @@ def run(args: argparse.Namespace) -> None:
         expect("hunter2" not in logs["items"][0]["message"], "A password was stored unmasked")
         step("log entry shipped with an ingest key, found by search, password masked")
 
+        if args.github_repo:
+            check_deployment_records(api, args.target, args.github_repo, args.github_workflow)
+
         _, system, _ = api.call("GET", "/api/system/status")
         expect(system["worker"]["healthy"], "The monitoring worker is not healthy")
         step("monitoring worker healthy")
@@ -232,6 +282,8 @@ def main() -> int:
     )
     parser.add_argument("--expect-frontend", action="store_true", help="check the built app")
     parser.add_argument("--expect-docs-off", action="store_true", help="check /api/docs is off")
+    parser.add_argument("--github-repo", help="owner/name: also check deployment records from it")
+    parser.add_argument("--github-workflow", default="deploy.yml", help="its workflow file")
     args = parser.parse_args()
     started = time.monotonic()
     try:

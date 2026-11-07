@@ -23,6 +23,10 @@ jobs:
   checks:
     name: CI
     uses: ./.github/workflows/ci.yml
+    # What ci.yml asks for; a called workflow cannot have more than its caller grants.
+    permissions:
+      contents: read
+      actions: read
 
   publish:
     name: Build, smoke-test and publish the image
