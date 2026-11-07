@@ -87,6 +87,10 @@ def build_app() -> Starlette:
 def _serve() -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
+    # Listen before announcing the port: connections then wait in the backlog until uvicorn
+    # accepts them. Announcing first was a race that Windows hid (it retries a refused connection
+    # for about 2 s) and Linux did not.
+    listener.listen(128)
     print(listener.getsockname()[1], flush=True)  # the parent reads the port from this line
     config = uvicorn.Config(build_app(), log_level="critical", lifespan="off")
     uvicorn.Server(config).run(sockets=[listener])

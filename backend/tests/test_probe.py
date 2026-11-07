@@ -226,7 +226,13 @@ def _open_client_sockets(server_port: int) -> int:
     """Sockets in this process still connected to the test server (it runs in another process)."""
     count = 0
     for candidate in gc.get_objects():
-        if isinstance(candidate, socket.socket) and candidate.fileno() != -1:
+        # Network sockets only: on Linux the event loop's own wake-up socket is a Unix socket,
+        # whose peer name is a string rather than an address.
+        if (
+            isinstance(candidate, socket.socket)
+            and candidate.fileno() != -1
+            and candidate.family in (socket.AF_INET, socket.AF_INET6)
+        ):
             with contextlib.suppress(OSError):
                 if candidate.getpeername()[1] == server_port:
                     count += 1
