@@ -164,7 +164,9 @@ class CloudOpsProcess:
         assert self.process is None or self.process.poll() is not None, "already running"
         self.runs += 1
         self._log = self.log_path.open("wb")
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        flags = 0
+        if sys.platform == "win32":  # a statement, so mypy checks it per platform
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP  # CTRL_BREAK reaches only this process
         self.process = subprocess.Popen(  # noqa: S603 - fixed arguments
             [sys.executable, "-m", "cloudops.cli", "serve", "--port", str(self.port)],
             cwd=self.workdir,
