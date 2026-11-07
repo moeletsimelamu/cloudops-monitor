@@ -25,6 +25,14 @@ services:
       CLOUDOPS_GITHUB_TOKEN: ${CLOUDOPS_GITHUB_TOKEN:-}
     volumes:
       - cloudops-data:/data
+    # Nothing outside /data (and a scratch /tmp in memory) is writable, no Linux capabilities,
+    # and no way to gain privileges (setuid binaries).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   sandbox:
@@ -40,6 +48,13 @@ services:
       # Optional: an ingest key created for the sandbox in CloudOps, so it ships its request logs.
       SANDBOX_INGEST_KEY: ${SANDBOX_INGEST_KEY:-}
       SANDBOX_TRAFFIC_RPS: ${SANDBOX_TRAFFIC_RPS:-0}
+    # Nothing but a scratch /tmp in memory is writable; no capabilities or privilege gain.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 volumes:

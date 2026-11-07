@@ -42,7 +42,7 @@ jobs:
       CLOUDOPS_OPERATOR_TOKEN: deploy-operator-token-${{ github.run_id }}-${{ github.run_attempt }}-0123456789
       SANDBOX_CONTROL_TOKEN: deploy-sandbox-control-${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Image names
         id: names

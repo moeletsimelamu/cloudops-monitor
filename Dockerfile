@@ -3,6 +3,7 @@
 #
 #   docker build -t cloudops-monitor .
 #   docker run --rm -p 127.0.0.1:8300:8300 -v cloudops-data:/data \
+#       --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
 #       -e CLOUDOPS_OPERATOR_TOKEN=<from cloudops generate-token> cloudops-monitor
 #
 # The database lives in the /data volume, never in the image. No secrets are baked in: the operator
