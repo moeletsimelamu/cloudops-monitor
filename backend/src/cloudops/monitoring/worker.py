@@ -63,6 +63,7 @@ class MonitoringWorker:
         self.rng = rng or random.Random()  # noqa: S311 - jitter, not security
         self.deployment_sync = deployment_sync
         self._sync_task: asyncio.Task[object] | None = None
+        self._retention_task: asyncio.Task[object] | None = None
         self.started_at: datetime | None = None
         self.last_tick_at: datetime | None = None
         self.loop_lag_ms: float = 0.0
@@ -110,7 +111,7 @@ class MonitoringWorker:
                 await self.tick()
                 if time.monotonic() >= next_retention:
                     next_retention = time.monotonic() + self.retention_interval.total_seconds()
-                    await self.retention()
+                    self.start_retention()
                 if time.monotonic() >= next_sync:
                     next_sync = time.monotonic() + self.settings.github_sync_seconds
                     self.start_deployment_sync()
@@ -173,13 +174,33 @@ class MonitoringWorker:
         task.add_done_callback(self._check_finished)
         return True
 
+    def start_retention(self) -> bool:
+        """Start retention in the background. Awaiting it here held up scheduling: on a large
+        database no check was started for as long as the deletes took."""
+        if self._retention_task is not None and not self._retention_task.done():
+            return False
+        task: asyncio.Task[object] = asyncio.create_task(self._retention_in_background())
+        self._retention_task = task
+        self._checks.add(task)
+        task.add_done_callback(self._check_finished)
+        return True
+
     async def wait_for_checks(self) -> None:
         """Wait until every check started so far has finished (used by tests)."""
         while self._checks:
             await asyncio.gather(*self._checks, return_exceptions=True)
 
+    async def _retention_in_background(self) -> None:
+        try:
+            await self.retention()
+        except Exception:
+            # Tried again at the next interval; checks are unaffected.
+            logger.exception("Retention failed", extra={"fields": {"event": "retention.failed"}})
+
     async def retention(self) -> None:
+        started = time.monotonic()
         result = await run_db_work(run_retention, self.session_factory, self.settings, self.clock())
+        duration_ms = round((time.monotonic() - started) * 1000, 1)
         self.last_retention = result
         if result.health_checks or result.events or result.log_entries:
             logger.info(
@@ -190,6 +211,7 @@ class MonitoringWorker:
                         "health_checks": result.health_checks,
                         "events": result.events,
                         "log_entries": result.log_entries,
+                        "duration_ms": duration_ms,
                     }
                 },
             )

@@ -3,11 +3,17 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import ColumnElement, delete, func, select
+from sqlalchemy import ColumnElement, and_, delete, func, select
 from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
 
 from cloudops.config import Settings
-from cloudops.db.models import HealthCheck, LogEntry, OperationalEvent, OperatorSession
+from cloudops.db.models import (
+    Application,
+    HealthCheck,
+    LogEntry,
+    OperationalEvent,
+    OperatorSession,
+)
 from cloudops.db.session import session_scope
 
 BATCH_SIZE = 5000
@@ -48,14 +54,27 @@ def _log_cap_cutoff(factory: sessionmaker[Session], max_rows: int) -> int | None
         return db.scalar(select(LogEntry.id).order_by(LogEntry.id).offset(excess - 1).limit(1))
 
 
+def _delete_old_checks(factory: sessionmaker[Session], cutoff: datetime) -> int:
+    """Application by application, so each batch is a range search on the (application,
+    started_at) index. A condition on ``started_at`` alone cannot use that index, and each batch
+    scanned the whole index instead: 18 s for 288,000 of 1.15 million checks. Every check
+    belongs to an application (deleting one deletes its checks)."""
+    with session_scope(factory) as db:
+        application_ids = list(db.scalars(select(Application.id)))
+    return sum(
+        _delete_in_batches(
+            factory,
+            HealthCheck.id,
+            and_(HealthCheck.application_id == app_id, HealthCheck.started_at < cutoff),
+        )
+        for app_id in application_ids
+    )
+
+
 def run_retention(
     factory: sessionmaker[Session], settings: Settings, now: datetime
 ) -> RetentionResult:
-    checks = _delete_in_batches(
-        factory,
-        HealthCheck.id,
-        HealthCheck.started_at < now - timedelta(days=settings.check_retention_days),
-    )
+    checks = _delete_old_checks(factory, now - timedelta(days=settings.check_retention_days))
     events = _delete_in_batches(
         factory,
         OperationalEvent.id,

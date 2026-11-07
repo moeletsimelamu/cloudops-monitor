@@ -1,11 +1,14 @@
+import sqlite3
 from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from cloudops.config import Settings
 from cloudops.main import create_app
+from tests.conftest import operator_headers
 
 
 @pytest.fixture
@@ -116,3 +119,39 @@ def test_same_origin_and_non_browser_writes_pass_the_guard(client: TestClient) -
 def test_cross_site_reads_are_not_blocked(client: TestClient) -> None:
     response = client.get("/api/health/live", headers={"Origin": "https://elsewhere.example"})
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("driver_message", "code", "log_event"),
+    [
+        ("database is locked", "database_busy", "database.busy"),
+        ("database table is locked", "database_busy", "database.busy"),
+        ("disk I/O error", "database_unavailable", "database.unavailable"),
+        ("attempt to write a readonly database", "database_unavailable", "database.unavailable"),
+    ],
+)
+def test_database_errors_are_503s_that_say_what_happened(
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+    driver_message: str,
+    code: str,
+    log_event: str,
+) -> None:
+    app = create_app(settings)
+
+    @app.post("/api/test/write")
+    def write() -> None:
+        raise OperationalError(
+            "UPDATE applications ...", {}, sqlite3.OperationalError(driver_message)
+        )
+
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.post("/api/test/write", headers=operator_headers())
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "5"
+    error = response.json()["error"]
+    assert error["code"] == code
+    assert "nothing was changed" in error["message"]
+    assert "UPDATE" not in response.text, "the statement is not shown to the client"
+    record = next(r for r in caplog.records if getattr(r, "fields", {}).get("event") == log_event)
+    assert (record.exc_info is None) == (code == "database_busy")

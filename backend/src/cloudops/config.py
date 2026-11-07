@@ -9,9 +9,9 @@ Neither ever includes a secret value.
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 MIN_OPERATOR_TOKEN_LENGTH = 32
@@ -121,6 +121,20 @@ class ConfigurationError(RuntimeError):
     def __init__(self, errors: list[str]) -> None:
         super().__init__("Invalid configuration:\n- " + "\n- ".join(errors))
         self.errors = errors
+
+
+def load_settings(**overrides: Any) -> Settings:
+    """Read the settings, turning a value that cannot be parsed into a :class:`ConfigurationError`
+    that names the environment variable. The rejected value is never repeated: it may be a
+    secret."""
+    try:
+        return Settings(**overrides)
+    except ValidationError as error:
+        problems = []
+        for item in error.errors():
+            name = str(item["loc"][0]).upper() if item["loc"] else "?"
+            problems.append(f"CLOUDOPS_{name}: {item['msg']}.")
+        raise ConfigurationError(problems) from None
 
 
 def check_settings(settings: Settings) -> SettingsReport:

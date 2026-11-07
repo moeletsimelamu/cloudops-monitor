@@ -5,10 +5,12 @@ by default).
 """
 
 import logging
+import sqlite3
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 
 from fastapi import FastAPI
+from sqlalchemy.exc import DBAPIError
 
 from cloudops import __version__
 from cloudops.api import (
@@ -23,7 +25,7 @@ from cloudops.api import (
     system,
 )
 from cloudops.auth import FailedSignInLimiter
-from cloudops.config import ConfigurationError, Settings, check_settings
+from cloudops.config import ConfigurationError, Settings, check_settings, load_settings
 from cloudops.db.migrate import upgrade_to_head
 from cloudops.db.session import create_db_engine, create_session_factory
 from cloudops.deployments.sync import DeploymentSync
@@ -42,8 +44,35 @@ from cloudops.spa import register_spa
 logger = logging.getLogger(__name__)
 
 
+class StorageError(RuntimeError):
+    """The data directory or the database cannot be used. Already logged when raised."""
+
+
+def prepare_storage(settings: Settings) -> None:
+    """Create the data directory and bring the schema up to date, or, with migrations off, at
+    least read the database. A damaged file or a directory the server cannot write is reported
+    as one critical record naming the file, instead of surfacing as a traceback."""
+    path = settings.database_path
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        if settings.auto_migrate:
+            upgrade_to_head(path)
+        else:
+            with closing(sqlite3.connect(path)) as connection:
+                connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except (OSError, sqlite3.Error, DBAPIError) as error:
+        reason = str(error.orig) if isinstance(error, DBAPIError) else str(error)
+        logger.critical(
+            "CloudOps Monitor cannot use the database at %s: %s",
+            path,
+            reason,
+            extra={"fields": {"event": "database.unusable", "path": str(path), "reason": reason}},
+        )
+        raise StorageError(reason) from error
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings if settings is not None else Settings()
+    settings = settings if settings is not None else load_settings()
     report = check_settings(settings)
     if report.errors:
         raise ConfigurationError(report.errors)
@@ -61,9 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        settings.data_dir.mkdir(parents=True, exist_ok=True)
-        if settings.auto_migrate:
-            upgrade_to_head(settings.database_path)
+        prepare_storage(settings)
         for warning in report.warnings:
             logger.warning(warning, extra={"fields": {"event": "config.warning"}})
         logger.info(
@@ -86,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if worker is not None:
                 await worker.stop()
             engine.dispose()
+            logger.info("CloudOps Monitor stopped", extra={"fields": {"event": "app.stopped"}})
 
     app = FastAPI(
         title="CloudOps Monitor API",

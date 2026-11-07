@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -53,3 +54,38 @@ def test_db_backup_without_a_database_fails_clearly(
 ) -> None:
     assert main(["db", "backup", str(tmp_path / "copy.db")]) == 1
     assert "No database" in capsys.readouterr().err
+
+
+def test_serve_with_an_invalid_configuration_prints_one_json_line_and_exits_2(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CLOUDOPS_OPERATOR_TOKEN", "too-short-but-secret")
+    assert main(["serve", "--port", "1"]) == 2
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert (record["level"], record["event"]) == ("critical", "config.invalid")
+    assert record["errors"] == ["CLOUDOPS_OPERATOR_TOKEN must be at least 32 characters long."]
+    assert "too-short-but-secret" not in lines[0]
+    assert not data_dir.exists()
+
+
+def test_serve_with_a_damaged_database_exits_3_naming_the_file(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CLOUDOPS_OPERATOR_TOKEN", "x" * 40)
+    data_dir.mkdir()
+    (data_dir / "cloudops.db").write_bytes(b"not a database" * 200)
+    assert main(["serve", "--port", "1"]) == 3
+    records = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    failure = next(r for r in records if r.get("event") == "database.unusable")
+    assert failure["reason"] == "file is not a database"
+    assert str(data_dir / "cloudops.db") in failure["message"]
+
+
+def test_db_commands_report_an_invalid_setting_instead_of_a_traceback(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("CLOUDOPS_LOG_RETENTION_DAYS", "forever")
+    assert main(["db", "upgrade"]) == 2
+    assert "CLOUDOPS_LOG_RETENTION_DAYS" in capsys.readouterr().out

@@ -4,6 +4,7 @@ Every error response has the shape ``{"error": {"code", "message", "request_id",
 Messages are written for the person reading them and never contain stack traces or secrets.
 """
 
+import logging
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any, cast
@@ -11,7 +12,13 @@ from typing import Any, cast
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+logger = logging.getLogger(__name__)
+
+# How long a client should wait before retrying when the database is busy or unavailable.
+DATABASE_RETRY_AFTER_SECONDS = 5
 
 
 class AppError(Exception):
@@ -118,7 +125,53 @@ async def _handle_validation_error(request: Request, exc: Exception) -> JSONResp
     )
 
 
+def is_database_busy(error: OperationalError) -> bool:
+    """SQLite's "database is locked" / "database table is locked": another connection held the
+    write lock for longer than ``busy_timeout``. Retrying shortly is the right response."""
+    text = str(error.orig).lower()
+    return "locked" in text or "busy" in text
+
+
+async def _handle_database_error(request: Request, exc: Exception) -> JSONResponse:
+    """The database could not be used. Not the client's fault, and usually temporary: 503 with
+    ``Retry-After``, and a message that says what happened instead of a generic server error."""
+    error = cast(OperationalError, exc)
+    headers = {"Retry-After": str(DATABASE_RETRY_AFTER_SECONDS)}
+    if is_database_busy(error):
+        # Expected under contention (a backup, a long write elsewhere): no traceback needed.
+        logger.warning(
+            "Database busy during %s %s",
+            request.method,
+            request.url.path,
+            extra={"fields": {"event": "database.busy", "error": str(error.orig)}},
+        )
+        return error_response(
+            request,
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "database_busy",
+            "The database is busy with another write and nothing was changed. Try again in a "
+            "few seconds.",
+            headers=headers,
+        )
+    logger.error(
+        "Database unavailable during %s %s",
+        request.method,
+        request.url.path,
+        exc_info=error,
+        extra={"fields": {"event": "database.unavailable"}},
+    )
+    return error_response(
+        request,
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "database_unavailable",
+        "The database cannot be used right now, so nothing was changed. The server's log says "
+        "why; quote the request ID if you report it.",
+        headers=headers,
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _handle_app_error)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    app.add_exception_handler(OperationalError, _handle_database_error)

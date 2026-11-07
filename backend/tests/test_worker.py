@@ -16,6 +16,8 @@ from cloudops.config import Settings
 from cloudops.db.models import Application, HealthCheck, LogEntry, OperationalEvent, SystemState
 from cloudops.db.session import session_scope
 from cloudops.domain.classification import Observation
+from cloudops.monitoring import retention as retention_module
+from cloudops.monitoring import worker as worker_module
 from cloudops.monitoring.runner import CheckRunner
 from cloudops.monitoring.target_policy import TargetPolicy
 from cloudops.monitoring.worker import HEARTBEAT_KEY, MonitoringWorker
@@ -318,6 +320,95 @@ async def test_retention_removes_old_records_and_caps_logs(
     assert "old" not in messages
     assert "entry 0" in messages  # the newest entries are kept
     assert "entry 1004" not in messages
+
+
+async def test_retention_removes_old_checks_of_every_application(
+    tmp_path: Path, factory: sessionmaker[Session]
+) -> None:
+    """Retention deletes application by application (to use the index); none is missed."""
+    with session_scope(factory) as db:
+        for slug in ("orders-api", "billing-api", "search-api"):
+            app = make_application(db, slug)
+            for age_days in (45, 31, 29, 1):
+                db.add(
+                    HealthCheck(
+                        application_id=app.id,
+                        started_at=NOW - timedelta(days=age_days),
+                        signal="ok",
+                        state_after="healthy",
+                    )
+                )
+    worker = _worker(
+        factory, make_settings(tmp_path, check_retention_days=30), FakeProbe(), Clock()
+    )
+    await worker.retention()
+    assert worker.last_retention is not None
+    assert worker.last_retention.health_checks == 6
+    with session_scope(factory) as db:
+        ages = sorted((NOW - c.started_at).days for c in db.scalars(select(HealthCheck)))
+    assert ages == [1, 1, 1, 29, 29, 29]
+
+
+async def test_checks_keep_being_scheduled_while_retention_runs(
+    factory: sessionmaker[Session], settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the loop awaited retention, so no check started while it ran (18 s on a
+    database of 1.15 million checks)."""
+    started, release = threading.Event(), threading.Event()
+    real_retention = retention_module.run_retention
+
+    def slow_retention(*args: object) -> object:
+        started.set()
+        release.wait(timeout=10)
+        return real_retention(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(worker_module, "run_retention", slow_retention)
+    probe, clock = FakeProbe(), Clock()
+    runner = CheckRunner(factory, settings, probe_fn=probe, clock=clock)
+    worker = MonitoringWorker(factory, settings, runner, clock=clock, tick_seconds=0.05)
+    await worker.start()
+    try:
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        _add(factory, "orders-api")  # due only once retention is under way
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not probe.calls:
+            await asyncio.sleep(0.05)
+        assert probe.calls, "a check ran while retention was still deleting"
+        assert worker.last_retention is None
+        assert not worker.start_retention(), "only one retention run at a time"
+    finally:
+        release.set()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and worker.last_retention is None:
+        await asyncio.sleep(0.05)
+    await worker.stop()
+    assert worker.last_retention is not None
+
+
+async def test_a_failing_retention_is_logged_and_does_not_count_as_a_failed_tick(
+    factory: sessionmaker[Session],
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def broken(*_args: object) -> object:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(worker_module, "run_retention", broken)
+    probe, clock = FakeProbe(), Clock()
+    runner = CheckRunner(factory, settings, probe_fn=probe, clock=clock)
+    worker = MonitoringWorker(factory, settings, runner, clock=clock, tick_seconds=0.05)
+    await worker.start()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not any(
+        getattr(r, "fields", {}).get("event") == "retention.failed" for r in caplog.records
+    ):
+        await asyncio.sleep(0.05)
+    await worker.stop()
+    assert any(getattr(r, "fields", {}).get("event") == "retention.failed" for r in caplog.records)
+    assert worker.consecutive_tick_failures == 0
+    assert worker.last_tick_at == NOW
 
 
 async def test_a_worker_that_just_started_is_healthy_but_one_that_never_ticks_is_not(

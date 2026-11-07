@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cloudops.config import ConfigurationError, Settings, check_settings
+from cloudops.config import ConfigurationError, Settings, check_settings, load_settings
 from cloudops.main import create_app
 from tests.conftest import OPERATOR_TOKEN, make_settings
 
@@ -89,3 +89,20 @@ def test_secret_values_lists_only_configured_secrets(tmp_path: Path) -> None:
     settings = make_settings(tmp_path, github_token="ghp_" + "x" * 36)
     assert settings.secret_values() == [OPERATOR_TOKEN, "ghp_" + "x" * 36]
     assert make_settings(tmp_path, auth_mode="disabled", operator_token=None).secret_values() == []
+
+
+def test_unparseable_values_name_the_variable_and_never_repeat_the_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUDOPS_SESSION_HOURS", "twelve-secret-ish")
+    monkeypatch.setenv("CLOUDOPS_AUTH_MODE", "tokens")
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(_env_file=None)
+    errors = caught.value.errors
+    assert any(
+        e.startswith("CLOUDOPS_SESSION_HOURS: Input should be a valid integer") for e in errors
+    )
+    assert any(
+        e.startswith("CLOUDOPS_AUTH_MODE: Input should be 'token' or 'disabled'") for e in errors
+    )
+    assert "twelve-secret-ish" not in str(caught.value)
