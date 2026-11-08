@@ -1,7 +1,8 @@
 # Delivery for every push to main (and on demand):
 #   1. the whole CI workflow runs first; nothing below starts unless it passes;
 #   2. the image is built, smoke-tested with the sandbox, and published to GitHub Container Registry;
-#   3. it is rolled out to a server only if one is configured (docs/DEPLOYMENT.md, option B).
+#   3. on a fresh runner, signed out, the published image is pulled and run the two documented ways;
+#   4. it is rolled out to a server only if one is configured (docs/DEPLOYMENT.md, option B).
 #      Without that configuration the last job says so and changes nothing. It never reports a
 #      rollout that did not happen.
 name: Deploy
@@ -38,6 +39,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.names.outputs.image }}
+      digest: ${{ steps.publish.outputs.digest }}
     env:
       CLOUDOPS_OPERATOR_TOKEN: deploy-operator-token-${{ github.run_id }}-${{ github.run_attempt }}-0123456789
       SANDBOX_CONTROL_TOKEN: deploy-sandbox-control-${{ github.run_id }}
@@ -74,6 +76,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Publish
+        id: publish
         # Errors become annotations, which are readable on the run page without opening the log.
         run: |
           publish() {
@@ -87,6 +90,7 @@ jobs:
           publish "${{ steps.names.outputs.image }}"
           # The registry's digest, from the push itself: the local image store may not record it.
           digest="$(grep -oE 'digest: sha256:[0-9a-f]{64}' push.log | head -n 1 | cut -d' ' -f2 || true)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           publish "${{ steps.names.outputs.repository }}:latest"
           {
             echo "### Image published"
@@ -102,9 +106,75 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  verify:
+    name: Pull and run the published image, as a user would
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      CLOUDOPS_OPERATOR_TOKEN: verify-operator-token-${{ github.run_id }}-${{ github.run_attempt }}-0123456789
+      SANDBOX_CONTROL_TOKEN: verify-sandbox-control-${{ github.run_id }}
+      IMAGE: ${{ needs.publish.outputs.image }}
+      DIGEST: ${{ needs.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull without signing in
+        # A fresh runner with no registry login: this is what anyone pulling the image gets.
+        run: |
+          test -n "$DIGEST"
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker pull "$IMAGE"
+          pulled="$(docker image inspect --format '{{join .RepoDigests " "}}' "$IMAGE")"
+          echo "Pulled: $pulled"
+          echo "$pulled" | grep -qF "@$DIGEST"
+
+      - name: The documented docker run command
+        # docs/DEPLOYMENT.md "With the image alone", on another port.
+        run: |
+          docker run -d --name cloudops -p 127.0.0.1:8301:8300 -v cloudops-verify:/data \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+            -e CLOUDOPS_OPERATOR_TOKEN -e CLOUDOPS_ALLOWED_TARGETS=example.org:443 "$IMAGE"
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8301/api/health/ready | grep -q '"status":"ready"' && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8301/api/health/ready
+          curl -fsS http://127.0.0.1:8301/ | grep -q '<co-root>'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8301/api/docs)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8301/api/overview)" = "401"
+          docker rm -f cloudops
+
+      - name: Smoke test the published image with Compose
+        # The sandbox is built from this commit; CloudOps Monitor is the pulled image, unchanged.
+        run: |
+          docker tag "$IMAGE" cloudops-monitor:local
+          docker compose build sandbox
+          docker compose up -d --no-build
+          python3 scripts/smoke.py --base http://127.0.0.1:8300 --sandbox http://127.0.0.1:8310 \
+            --target http://sandbox:8310/health --expect-frontend --expect-docs-off
+          {
+            echo "### Published image verified"
+            echo
+            echo "Pulled \`$IMAGE\` (\`$DIGEST\`) without signing in, ran it with the documented"
+            echo "\`docker run\` command, and passed the smoke test with Compose."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop
+        if: always()
+        run: |
+          docker rm -f cloudops >/dev/null 2>&1 || true
+          docker compose down -v
+
   rollout:
     name: Roll out to a server (only when configured)
-    needs: publish
+    needs: [publish, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

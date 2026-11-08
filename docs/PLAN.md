@@ -15,7 +15,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 6 | CI/CD and packaging | Done — CI green on GitHub (6 jobs); image published to GHCR by Deploy; rollout correctly reported as not configured |
 | 7 | Integration and operational hardening | Done: system tests of the real server process, Playwright journey in CI, six defects fixed |
 | 8 | Security and quality review | Done: seven findings fixed (REVIEW.md); sessions end on token rotation; SECURITY.md §10 complete |
-| 9 | Deployment and final verification | Not started — needs a decision (see §6) |
+| 9 | Deployment and final verification | In progress: Option A verified (the published image pulled and run signed out, in CI); Option B waiting on your decision (§6) |
 | 10 | Portfolio readiness | Not started |
 
 ## 1. Environment (inspected 2026-10-27)
@@ -189,6 +189,25 @@ environment secrets exist. Without them, the deploy job prints which configurati
 ends with a neutral result. It never reports a deployment that did not happen. Whether to actually
 create a VM is your decision at Phase 9, after a current price check. No resources will be created
 without your approval.
+
+### Price check, 2026-11-08
+
+Read from the providers' own pages on 2026-11-08. Prices exclude tax and change often; check
+again before ordering. The image is built for `linux/amd64` only, so an Arm server would also need
+a multi-architecture build.
+
+| Provider and plan | vCPU / RAM / disk | Monthly | Billing | Public IPv4 | Notes |
+|---|---|---|---|---|---|
+| Hetzner CPX02 (Germany, Finland) | 1 / 1 GB / 20 GB | EUR 6.49 | Hourly (EUR 0.0104), capped at the monthly price | Included | 20 TB traffic. The cheaper CX23 (EUR 5.99) and Arm CAX11 showed "currently unavailable". |
+| DigitalOcean Basic | 1 / 1 GB / 25 GB | USD 6 | Per second, 60 s minimum; billed until destroyed, even when powered off | Included | 1 TB transfer. The USD 4 plan has 512 MB. Backups +20 %. |
+| AWS Lightsail | 2 / 1 GB / 40 GB | USD 7 | Hourly | Included | USD 5 for 512 MB. IPv6-only bundles are cheaper, but GitHub's runners and many visitors have no IPv6. |
+| Google Cloud e2-micro (Free Tier, us-west1, us-central1, us-east1) | 2 shared / 1 GB / 30 GB | about USD 3.65 | The VM is free; the IPv4 address is USD 0.005 an hour (1 free hour a month) | Charged | 1 GB of free egress a month; a billing account is required. |
+| Oracle Cloud Always Free, VM.Standard.E2.1.Micro (AMD) | 1/8 OCPU / 1 GB / 47-50 GB boot | USD 0 | — | Included | Must be in the home region; capacity is often unavailable; instances whose CPU (95th percentile) and network stay under 20 % for 7 days "may be reclaimed", which a quiet monitor would meet. The Arm A1 allowance is now 2 OCPU and 12 GB. |
+
+Other costs: a domain or subdomain for the HTTPS certificate (none if you already have one), and
+optional backups. Sources: hetzner.com/cloud, digitalocean.com/pricing/droplets and its billing
+docs, aws.amazon.com/lightsail/pricing, cloud.google.com/vpc/network-pricing and the Free Tier
+docs, docs.oracle.com Always Free Resources.
 
 ### How deployment records work in the local demo
 

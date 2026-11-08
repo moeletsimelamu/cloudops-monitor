@@ -16,8 +16,9 @@
 | `.github/workflows/deploy.yml` | On every push to `main`: CI, then build, smoke-test and publish the image, then roll out if a server is configured (§5). |
 
 The image is `ghcr.io/moeletsimelamu/cloudops-monitor`, tagged `sha-<first 12 characters of the
-commit>` and `latest`. It is public: on 2026-11-07 an anonymous request listed its tags, so
-`docker pull` needs no sign-in.
+commit>` and `latest`, for `linux/amd64`. It is public, so `docker pull` needs no sign-in: every
+Deploy run pulls it signed out and runs it (§5), and on 2026-11-08 an anonymous request also read
+its manifest and tags from here.
 
 ## 2. Option A — run it on your own machine
 
@@ -139,7 +140,10 @@ every delivery:
 1. **CI**: the whole of `ci.yml`. Nothing else starts unless all of it passes.
 2. **Publish**: build the image, smoke-test exactly that image with the sandbox, push it to GitHub
    Container Registry, and record the tags and digest in the run summary.
-3. **Roll out**: only if a server is configured (option B). Otherwise the job ends successfully with
+3. **Verify the published image**: on a fresh runner that has not signed in to the registry, pull
+   the image just published, check it is the digest that was pushed, run it with the `docker run`
+   command documented above, and smoke-test it with Compose. This is the image anyone else gets.
+4. **Roll out**: only if a server is configured (option B). Otherwise the job ends successfully with
    a notice, "Not rolled out", naming what is missing. It changes nothing and claims nothing.
 
 The sandbox application in the local demo can be linked to this repository's `deploy.yml`, so its
