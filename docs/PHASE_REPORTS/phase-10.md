@@ -78,8 +78,10 @@ match Phase 8's counts; they were run again so that the README's numbers come fr
 | Run | Result |
 |---|---|
 | Deploy #8 (ac9466b, the documentation fixes) | **Passed** in 5 min 38 s: all of CI, publish, the published image pulled signed out and run, "Not rolled out". |
+| Deploy #9 (0cde560, the README, screenshots and this report) | **Passed** in 5 min 41 s: all of CI (Playwright "20 passed (1.6m)"), publish, the published image pulled signed out and run, "Not rolled out". |
 
-The run for the commit that adds this report and the screenshots is added below once it has finished.
+On GitHub, the rendered README loads all eight screenshots and the architecture diagram. The commit
+that records this result runs Deploy once more; its result is on the repository's Actions page.
 
 ## The project as a whole
 
