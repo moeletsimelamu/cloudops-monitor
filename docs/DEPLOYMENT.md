@@ -1,8 +1,9 @@
 # CloudOps Monitor — Deployment
 
-> **Status:** Phase 6. The container image, Docker Compose setup, CI and the delivery workflow exist
-> and run in GitHub Actions. Running on a server (option B) is written but has never been used: no
-> server exists, and creating one is a decision for Phase 9.
+> **Status:** Phase 9, finished with option A only. The container image, Docker Compose setup, CI
+> and the delivery workflow run in GitHub Actions, and every delivery pulls and runs the published
+> image. Running on a server (option B) is written but has never been used: on 2026-11-09 the
+> owner decided against a server, because there is no budget for one (PLAN.md D62).
 
 ## 1. What is delivered
 
@@ -167,6 +168,10 @@ On the server, a `cloudops-deploy <image>` command pulls the image and restarts 
 same volume. The job then waits up to 150 seconds for `/api/health/ready`, and fails if the server
 does not report ready.
 
-**None of this has been run.** The server-side command, the proxy and the server itself belong to
-Phase 9, after a price check and your decision. Expected costs, security and teardown are in
-[PLAN.md](PLAN.md) §6. Nothing has been created.
+**None of this has been run, and nothing has been created.** Phase 9 checked prices on 2026-11-08
+([PLAN.md](PLAN.md) §6) and the owner chose not to run a server. Setting one up later would take:
+the server and a DNS name; a TLS proxy (Caddy) in front, listed in `CLOUDOPS_TRUSTED_PROXIES`; a
+deploy user whose key can only run `cloudops-deploy`; the five settings above in the `production`
+environment; and teardown by deleting the server, the DNS record, those settings and the keys. The
+server-side command and proxy configuration are not written yet, because they could not be tested
+without a server.

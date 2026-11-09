@@ -15,7 +15,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 6 | CI/CD and packaging | Done — CI green on GitHub (6 jobs); image published to GHCR by Deploy; rollout correctly reported as not configured |
 | 7 | Integration and operational hardening | Done: system tests of the real server process, Playwright journey in CI, six defects fixed |
 | 8 | Security and quality review | Done: seven findings fixed (REVIEW.md); sessions end on token rotation; SECURITY.md §10 complete |
-| 9 | Deployment and final verification | In progress: Option A verified (the published image pulled and run signed out, in CI); Option B waiting on your decision (§6) |
+| 9 | Deployment and final verification | Done with Option A only, by decision (no budget for a server): the published image pulled and run signed out in every Deploy run; the README followed from a fresh clone |
 | 10 | Portfolio readiness | Not started |
 
 ## 1. Environment (inspected 2026-10-27)
@@ -273,7 +273,7 @@ names only), verification of every claim, final report.
 |---|---|---|---|
 | B1 | Resolved 2026-11-05: `moeletsimelamu/cloudops-monitor` exists. `gh` is not installed, so CI results are read on github.com | — | Nothing. |
 | B2 | Docker is not installed locally | Local `docker compose up` verification | Nothing. The images are built and smoke-tested in CI on every push; they have never been built on this machine. Installing Docker Desktop later would allow local verification. |
-| B3 | Cloud hosting choice | Phase 9 Option B only | A decision at Phase 9, after a price check. |
+| B3 | Resolved 2026-11-09: no server, Option A only (no budget) | — | Nothing now. Option B can be set up later; the workflow is ready for it (DEPLOYMENT.md §6). |
 | B4 | No screen reader available to this session | A manual screen reader pass (SECURITY.md §10) | Optional: a pass with NVDA or VoiceOver. |
 
 ## 9. Decision log
@@ -341,3 +341,5 @@ names only), verification of every claim, final report.
 | D59 | Forwarded headers are believed only from `CLOUDOPS_TRUSTED_PROXIES`, applied by the application; `cloudops serve` turns uvicorn's handling off | Uvicorn's default trusts `127.0.0.1`, which is wrong both ways: spoofable by local processes, and not the proxy's address inside a container. Applying it in the app also covers tests and other servers. |
 | D60 | IPv6 transition addresses are checked as themselves and as the IPv4 address inside | Either form being blocked blocks the connection, so nothing that was blocked before is now allowed, while NAT64 to public addresses keeps working on IPv6-only hosts. |
 | D61 | Actions pinned to commit SHAs; no Dependabot | Tags can move. Automated pull requests on a public portfolio repository would be noise without someone to review them; the CI audit catches known advisories. |
+| D62 | Phase 9 ships Option A only; Option B stays written but unused | Decided by the owner on 2026-11-09: there is no budget for a server, and the free tiers checked either charge for the IPv4 address or may reclaim an idle VM (§6). The rollout job keeps reporting "Not rolled out" honestly. |
+| D63 | Every Deploy run pulls the image it published, signed out, and runs it the documented ways | With no server, this is the closest thing to a deployment: it checks what a user actually gets from the registry, not the image the runner built. |
