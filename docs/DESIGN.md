@@ -133,9 +133,11 @@ One horizontal time axis on the application detail page that layers, from top to
 Selecting a period filters the tabs below to that time. This is how the product scenario
 works: degradation, a deployment just before it, and error logs, all on one screen.
 
-Charts are hand-written SVG components that share axis and scale helpers. Each chart has a visible
-title, units, a time range, an `aria-label` summary, a keyboard readout (arrow keys move between
-periods) and a table alternative ("View as table").
+The timeline is a hand-written SVG component with its own scale helpers. It has a visible title,
+units, a time range, an `aria-label` summary, a keyboard readout (arrow keys move between periods)
+and a table alternative ("View as table"). The Health screen's matrix is HTML and CSS: each row's
+strip of periods has a text summary for screen readers, next to the row's availability, coverage
+and p95 as plain numbers; it has no arrow-key readout or separate table view.
 
 ## 7. States
 

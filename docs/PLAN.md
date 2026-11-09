@@ -70,50 +70,58 @@ There is **no demonstration mode with simulated data.** The sandbox produces *re
 of a real local process whose behaviour you control, and that is clearer than labelled fake data.
 Deployment records come only from GitHub. When no repository is configured, the UI says so.
 
-## 3. Folder structure
+## 3. Folder structure (as built)
 
 ```
 CloudOpsMonitor/
 ├── backend/
-│   ├── pyproject.toml            # direct deps pinned; ruff, mypy, pytest config
-│   ├── constraints.txt           # full transitive pin set
+│   ├── pyproject.toml            # direct dependencies pinned; ruff, mypy, pytest configuration
+│   ├── constraints.txt           # the full transitive pin set
 │   ├── alembic.ini
 │   ├── src/cloudops/
-│   │   ├── main.py               # app factory, lifespan (starts worker), static files
-│   │   ├── config.py  logging.py  cli.py
-│   │   ├── api/                  # routers: applications, checks, incidents, events,
-│   │   │                         #   deployments, logs, ingest, overview, system, auth
-│   │   ├── domain/               # pure logic: classification, state, availability,
-│   │   │                         #   redaction, deployment_status
-│   │   ├── monitoring/           # target_policy, probe (pinned transport), scheduler,
-│   │   │                         #   heartbeat, retention
+│   │   ├── main.py               # app factory, start-up checks, lifespan (starts the worker)
+│   │   ├── cli.py                # cloudops serve | db upgrade | db backup | generate-token
+│   │   ├── config.py  auth.py  errors.py  middleware.py  logging_setup.py  events.py  spa.py
+│   │   ├── api/                  # routers: applications, auth, deployments, events, health,
+│   │   │                         #   ingest, logs, overview, system; shared views and params
+│   │   ├── domain/               # pure logic: classification, health state, availability,
+│   │   │                         #   correlation, deployment status, redaction
+│   │   ├── monitoring/           # target_policy, probe (pinned connections), runner,
+│   │   │                         #   recorder, worker (scheduler, heartbeat), retention
 │   │   ├── deployments/          # github_client, sync
-│   │   ├── ingest/               # log batch validation + storage
-│   │   └── db/                   # models, session, repositories, migrations/
+│   │   ├── ingest/               # log batch validation, storage and rate limit
+│   │   └── db/                   # models, session, types (UTC), migrate, migrations/
+│   └── tests/                    # unit and API tests; servers.py (HTTP targets in their own
+│       │                         #   process); github_fake.py
+│       └── system/               # the real server as a child process (marker `system`)
+├── sandbox/                      # the controllable test target (FastAPI) and its log shipper
+│   ├── pyproject.toml  Dockerfile
+│   ├── src/cloudops_sandbox/
 │   └── tests/
-│       ├── unit/                 # domain + policy + probe with mock transport
-│       ├── integration/          # API tests on a temp SQLite DB, real local HTTP targets
-│       └── conftest.py
-├── sandbox/                      # controllable test target (FastAPI) + log shipper
-│   ├── pyproject.toml
-│   └── src/cloudops_sandbox/
 ├── frontend/                     # Angular 21 workspace
 │   ├── src/app/
-│   │   ├── core/                 # api client, auth, time-range + clock services, interceptors
-│   │   ├── shared/               # status badge, time display, data table, charts/, empty-state
-│   │   └── features/             # overview, applications, application-detail, health,
-│   │                             #   deployments, logs, events, system, sign-in
-│   └── e2e/                      # Playwright: smoke journey + axe checks
-├── scripts/
-│   └── smoke.py                  # API-level primary-workflow smoke test (uses the sandbox)
+│   │   ├── core/                 # API client, auth, polling, preferences (theme, time zone)
+│   │   ├── shared/               # status badges, states (loading, empty, error, confirm),
+│   │   │                         #   record lists, charts/ (the evidence timeline)
+│   │   └── features/             # overview, applications, application detail and form,
+│   │                             #   health, deployments, logs, events, system, sign-in
+│   ├── e2e/                      # Playwright: journey, every screen with axe, keyboard,
+│   │                             #   sessions, resilience
+│   └── playwright.config.ts
+├── scripts/smoke.py              # the primary workflow over HTTP, standard library only
 ├── .github/workflows/
-│   ├── ci.yml                    # every push / PR
-│   └── deploy.yml                # manual + main; deploys only when configured
-├── Dockerfile                    # frontend build → python runtime, non-root
-├── compose.yaml                  # cloudops + sandbox
+│   ├── ci.yml                    # every branch push and pull request
+│   └── deploy.yml                # main: CI, publish, verify the published image, roll out
+│                                 #   only when a server is configured
+├── Dockerfile                    # frontend build, then the Python runtime; non-root
+├── compose.yaml                  # CloudOps Monitor and the sandbox, locked down
 ├── .env.example
 └── docs/  ARCHITECTURE · DESIGN · SECURITY · DEPLOYMENT · REVIEW · PLAN · PHASE_REPORTS/
 ```
+
+The Phase 1 plan had separate `unit/` and `integration/` test folders and a repository layer in
+`db/`; neither was needed once the tests were organised by module and the queries lived next to the
+routers that use them.
 
 ## 4. Dependencies and versions
 
@@ -121,7 +129,8 @@ Direct dependencies are pinned exactly. Versions start from the set already prov
 this machine and in CI for DocuMind (October 2026). New packages were checked against the package
 indexes on 2026-10-27.
 
-**Backend (Python ≥ 3.12; developed on 3.14.3, image `python:3.14-slim`)**
+**Backend (Python ≥ 3.12, tested on 3.12 and 3.14 in CI; developed on 3.14.3; image
+`python:3.14.9-slim-trixie`)**
 
 | Package | Version | Why |
 |---|---|---|
@@ -130,11 +139,12 @@ indexes on 2026-10-27.
 | pydantic / pydantic-settings | 2.14.1 / 2.16.1 | validation, typed config |
 | sqlalchemy | 2.1.6 | ORM / query layer |
 | alembic | 1.20.1 | schema migrations (new for this project) |
-| httpx2 | 2.16.0 | async HTTP client for probes and GitHub; maintained successor to httpx, required by Starlette 1.10's test client. Phase 3 confirms it supports a custom network backend for pinned connections; if not, the probe uses a custom transport at the httpcore layer. |
-| *dev:* pytest 9.1.1, ruff 0.17.2, mypy 2.4.0, pip-audit (Phase 6) | | tests, lint, types, dependency audit |
+| httpx2 | 2.16.0 | async HTTP client for GitHub (the probe uses its httpcore2 layer directly, for pinned connections: D20); maintained successor to httpx, required by Starlette 1.10's test client |
+| *dev:* pytest 9.1.1, ruff 0.17.2, mypy 2.4.0; pip-audit 2.10.1 in CI | | tests, lint, types, dependency audit |
 
-No mocking library: probe tests use `MockTransport` and real throwaway local HTTP servers
-(including deliberately slow ones for timeout tests).
+No mocking library: probe tests use real local HTTP servers in their own process, including
+deliberately slow ones for timeout tests (D34), and GitHub client tests use httpx2's
+`MockTransport`.
 
 **Frontend (Node 22.14, npm 10.9)**
 
@@ -146,7 +156,8 @@ No mocking library: probe tests use `MockTransport` and real throwaway local HTT
 | vitest + jsdom | 4.1.12 / 28.1.0 | unit and component tests |
 | @playwright/test + @axe-core/playwright | 1.64.0 / 4.13.0 | end-to-end tests and accessibility checks |
 | prettier | 3.9.10 | formatting check |
-| override `vite` | 7.3.7 | npm 10.9 crashes on the newest Vite peer range (DocuMind finding) |
+| @types/node | 22.15.3 | types for the Playwright configuration and tests |
+| overrides `vite`, `undici` (under `@angular/build`), `playwright-core` | 7.3.7 / 7.30.1 / 1.64.0 | npm 10.9 crashes on the newest Vite peer range (DocuMind finding); `undici` raised from the 7.29.1 that `@angular/build` pins (added with the frontend in Phase 5; the reason was not recorded); one `playwright-core` for the test runner and axe (Phase 7) |
 
 No charting library and no UI component library (see ARCHITECTURE §10).
 
@@ -158,10 +169,10 @@ No charting library and no UI component library (see ARCHITECTURE §10).
 | Probe | Real local servers returning 200/3xx/404/429/500/503, slow responses (timeout), closed ports (connection refused), unresolvable names, oversized bodies, JSON `status` bodies, a DNS answer changing to a blocked address | pytest + a throwaway uvicorn server on an ephemeral port + resolver injection |
 | API integration | Register / validate / update / delete; run check now; health history and availability endpoints; events; deployments sync against a fake GitHub (MockTransport with recorded-shape payloads); log ingest (auth, limits, redaction, per-entry errors) and filtering; pagination and time-range validation; auth on/off, sessions, Origin check; liveness vs readiness (worker stopped → not ready); error envelope never leaks internals | pytest + TestClient + temporary SQLite file per test |
 | Worker | Concurrency cap; a slow target does not block others; restart → `worker_started` event with gap; retention batches, per application, beside the scheduler | pytest with a controllable clock |
-| System | The server as a real process (`cloudops serve`): invalid settings at start-up; graceful stop and restart; killed during a check, then restarted after a real gap; a write lock held by another process (503s, then not ready, then recovery); a damaged database file; an unwritable data directory; a backup while running; timeouts to incident to recovery; log ingest and filters; UTC under a UTC+14 server; retention on 40 days of checks while the API is in use | pytest, `tests/system/` (marker `system`), local target servers in their own processes |
+| System | The server as a real process (`cloudops serve`): invalid settings at start-up; graceful stop and restart; killed during a check, then restarted after a real gap; a write lock held by another process (503s, then not ready, then recovery); a damaged database file; an unwritable data directory; a backup while running; timeouts to incident to recovery; log ingest and filters; UTC under a UTC+14 server; retention on 40 days of checks while the API is in use; forwarded headers with and without a trusted proxy, token rotation across a restart, an oversized request (Phase 8) | pytest, `tests/system/` (marker `system`), local target servers in their own processes |
 | Frontend | Registry renders; status badge shows glyph + label for each state; detail loads and shows partial failures per panel; deployment filters; log filters and empty results; API error display; buttons disabled while pending; time-range query params | vitest + Angular testing utilities, HTTP testing controller |
-| End-to-end | The primary journey against real processes: start CloudOps + sandbox → register the sandbox → healthy → switch the sandbox to `errors` → incident + event → restore → recovered; ingest key and log filters; pause, remove, sign out; every screen at two sizes and in both themes with no serious axe violations; losing the API; a lost session; a UTC+14 time zone | Playwright (`frontend/e2e`) and `scripts/smoke.py` (API only, runnable without a browser; also reads real deployment records) |
-| CI | ruff, mypy, pytest (system tests included), prettier, frontend tests, production build, Playwright, dependency audit, Docker build + container checks and smoke test | GitHub Actions |
+| End-to-end | The primary journey against real processes: start CloudOps + sandbox → register the sandbox → healthy → switch the sandbox to `errors` → incident + event → restore → recovered; ingest key and log filters; pause, remove, sign out; every screen at two sizes and in both themes with no serious axe violations; keyboard-only use; signing out everywhere from two browsers; losing the API; a lost session; a UTC+14 time zone | Playwright (`frontend/e2e`) and `scripts/smoke.py` (API only, runnable without a browser; also reads real deployment records) |
+| CI | ruff, mypy, pytest (system tests included), prettier, frontend tests, production build, Playwright, dependency audit, Docker build + container checks and smoke test; on `main`, the published image pulled signed out and run | GitHub Actions |
 
 Results are recorded in the phase reports from real command output. Counts are never estimated.
 

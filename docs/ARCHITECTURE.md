@@ -1,8 +1,9 @@
 # CloudOps Monitor — Architecture
 
-> **Status:** Phases 2 to 7 complete: the backend described here and the Angular frontend are
-> implemented and tested, including as a running system and through a browser, and run as one
-> container image in which the API process also serves the built frontend (`spa.py`). Packaging and the pipeline are in [DEPLOYMENT.md](DEPLOYMENT.md). Differences from the design are
+> **Status:** describes the system as built (Phases 2 to 9): the backend and the Angular frontend
+> are implemented and tested, including as a running system and through a browser, and run as one
+> container image in which the API process also serves the built frontend (`spa.py`). Packaging
+> and the pipeline are in [DEPLOYMENT.md](DEPLOYMENT.md). Differences from the original design are
 > recorded in the decision log in [PLAN.md](PLAN.md).
 
 ## 1. Shape of the system
@@ -42,22 +43,24 @@ Why a monolith rather than separate API / worker / ingest services:
   wide margin.
 - SQLite allows one writer at a time. A single process makes that easy to coordinate.
 - A single process makes the system easier to run, explain and test. The modules below still have
-  clear boundaries, so the worker could become its own process later
-  (`python -m cloudops.worker`) without rewriting it.
+  clear boundaries, so the worker could become its own process later without being rewritten.
 
 ## 2. Components and responsibilities
 
 | Module (`backend/src/cloudops/…`) | Responsibility | Talks to |
 |---|---|---|
 | `config.py` | Typed settings from `CLOUDOPS_*` environment variables (pydantic-settings). Validates at start-up and collects non-fatal configuration warnings for the System view. Secrets are `SecretStr` and never serialised. | — |
-| `logging_setup.py` | JSON-lines structured logging to stdout, a request-ID middleware, and a redaction filter. | — |
+| `logging_setup.py` | JSON-lines structured logging to stdout, with the request ID on every record and redaction of every line. | — |
+| `middleware.py` | Request IDs and the access log, security headers, request body limits, and the host-name and cross-site guard. | — |
+| `auth.py`, `errors.py` | Operator sessions and the sign-in limit; the error envelope and the handlers that produce it. | `db` |
+| `cli.py`, `main.py`, `spa.py` | `cloudops serve` (start-up checks, then uvicorn), `db upgrade`, `db backup` and `generate-token`; the app factory; serving the built frontend. | all |
 | `api/` | FastAPI routers, request/response schemas, the error envelope, auth dependencies and pagination helpers. Contains no business rules. | `domain`, `db` |
 | `domain/` | Pure functions: check classification, the health state machine, incident open/close, availability and latency statistics, redaction rules and deployment-status mapping. No I/O, so it is unit-tested exhaustively. | — |
 | `monitoring/` | Target policy (SSRF guard), the HTTP probe, the recorder (check → state → incident → events in one transaction), the check runner shared by the scheduler and "check now", the worker loop with heartbeat, and retention clean-up. | `domain`, `db`, network |
 | `events.py` | Writing operational events in the caller's transaction. | `db` |
 | `deployments/` | GitHub Actions client (REST, ETag-aware), mapping runs to `DeploymentRecord`s, and the sync job. | `domain`, `db`, GitHub |
 | `ingest/` | Validation, size limits and redaction for pushed log batches. | `domain`, `db` |
-| `db/` | SQLAlchemy 2.x models, engine/session setup (WAL, foreign keys, busy timeout), repositories (query functions), and Alembic migrations. | SQLite |
+| `db/` | SQLAlchemy 2.x models, engine/session setup (WAL, foreign keys, busy timeout), a UTC date-time type, and Alembic migrations. Queries live next to the routers and jobs that use them. | SQLite |
 | `sandbox/` (separate small package) | A controllable **test target**: a tiny FastAPI service whose health endpoint can be switched between healthy, erroring, slow, unavailable and flaky. It ships its request logs to CloudOps. It is used for local demos, the smoke test and the end-to-end tests. | CloudOps ingest |
 
 The frontend is a separate Angular workspace (`frontend/`) that talks only to the HTTP API. It uses
@@ -184,7 +187,7 @@ application turns stale within minutes, and the System view shows the worker's h
 
 ### 3.7 Availability and latency
 
-For a window W (`1h`, `24h` or `7d`):
+For a window W (`1h`, `6h`, `24h` or `7d`):
 
 - **Availability** = conclusive checks whose signal is not `fail` ÷ all conclusive checks in W.
 - **Coverage** = conclusive checks in W ÷ expected checks. Expected checks = the time the
@@ -192,7 +195,7 @@ For a window W (`1h`, `24h` or `7d`):
 - When coverage is below 50% or there are fewer than 10 checks, the UI shows "insufficient data"
   instead of a percentage.
 - **Latency**: p50 and p95 of `duration_ms` for checks that received an HTTP response, in time
-  buckets sized to the window (1 min for 1h, 15 min for 24h, 2 h for 7d).
+  buckets sized to the window (1 min for 1h, 15 min for 6h and 24h, 2 h for 7d).
 
 Limitations, which are also shown in the UI next to the metric:
 
@@ -251,8 +254,9 @@ Authorization: Bearer cok_<ingest key for one application>
   is what bounds growth between runs.
 - **Redaction before storage.** Attribute keys that look sensitive (`password`, `secret`, `token`,
   `authorization`, `cookie`, `api_key`, `session`, …) have their values replaced by `[REDACTED]`.
-  Values that look like credentials (bearer tokens, JWTs, GitHub `ghp_`/`github_pat_` tokens, AWS
-  access key IDs, `cok_` ingest keys) are masked wherever they appear in messages or attributes.
+  Values that look like credentials (bearer and basic credentials, JWTs, GitHub, AWS, Slack, Stripe
+  and Google keys, `cok_` ingest keys, PEM private keys, passwords in URLs and `password=` pairs)
+  are masked wherever they appear in messages or attributes.
   Redaction reduces the risk but is not a guarantee, and [SECURITY.md](SECURITY.md) says so.
 - The sandbox service includes a small Python `logging.Handler` (`log_shipper.py`, standard library
   only) that batches and ships records from a background thread. If CloudOps is unreachable it
@@ -355,11 +359,11 @@ about cause.
 | Endpoint | Meaning | Auth |
 |---|---|---|
 | `GET /api/health/live` | The process is running and the event loop responds. Never touches the database. | none |
-| `GET /api/health/ready` | Can do its job: the database answers `SELECT 1`, the schema is at the Alembic head, and the worker heartbeat is fresh (when the worker is enabled; this check is added with the worker in Phase 3). 503 with a list of failing checks otherwise. | none (no details beyond pass/fail names) |
+| `GET /api/health/ready` | Can do its job: the database answers `SELECT 1`, the schema is at the Alembic head, and the worker heartbeat is fresh (when the worker is enabled). 503 with a list of failing checks otherwise. | none (no details beyond pass/fail names) |
 | `GET /api/auth/session` | Whether the caller is signed in, and the auth mode. `POST` signs in with the operator token; `DELETE` signs out. | none |
 | `DELETE /api/auth/sessions` | Ends every browser session, the caller's included ("Sign out everywhere" on the System page). | operator |
-| `GET /api/system/status` | Worker heartbeat and loop lag, in-flight checks, last retention run, GitHub sync status and rate-limit remaining, database size, version, configuration warnings. | operator |
-| `GET /api/system/config` | Effective non-secret configuration and configuration warnings. Secrets are shown only as `set` / `not set`. *(Implemented in Phase 2; `/status` comes with the worker.)* | operator |
+| `GET /api/system/status` | Worker heartbeat and loop lag, consecutive failed passes, in-flight checks, the last retention run, database size and counts, version, configuration warnings. GitHub sync status and the remaining rate limit are in `GET /api/deployments/sources` (§6). | operator |
+| `GET /api/system/config` | Effective non-secret configuration and configuration warnings. Secrets are shown only as `set` / `not set`. | operator |
 
 Liveness answers "should this container be restarted?". Readiness answers "should traffic or trust
 be given to it?". A monitor whose worker has died is alive but not ready.
@@ -378,7 +382,6 @@ All routes need the operator. Errors use the envelope from §7.
 | `GET /api/applications/{slug}/checks?from&to&signal&limit&before` | History, newest first, keyset-paged. Ranges need a time zone and may span at most 30 days. |
 | `GET /api/applications/{slug}/incidents` | Incidents, newest first, with durations. |
 | `GET /api/applications/{slug}/metrics?window=1h\|6h\|24h\|7d` | Availability, coverage, p50/p95, buckets, and the definitions shown next to them in the UI. |
-| `GET /api/system/status` | Worker (running, last tick, loop lag, failures, in-flight checks, last retention), database size and counts, configuration warnings. |
 | `POST/DELETE /api/applications/{slug}/ingest-key` | Create or rotate (shown once), or revoke, the key this application ships logs with. |
 | `GET /api/applications/{slug}/request-metrics?window=` | Requests and 5xx responses per bucket, from the application's own request logs (§5.2). |
 | `POST /api/ingest/logs` | Log entries from an application. Uses its ingest key, not the operator. |
@@ -431,9 +434,9 @@ erDiagram
 | `health_checks` | application_id, started_at, duration_ms, http_status, signal, reason, detail, resolved_ip, state_after | (application_id, started_at) |
 | `incidents` | application_id, opened_at, closed_at, worst_state, opening_reason | (application_id, opened_at); partial unique (application_id) where closed_at is null |
 | `events` | occurred_at, type, severity, application_id, incident_id, deployment_id, summary, details (JSON) | (occurred_at), (application_id, occurred_at) |
-| `deployments` | application_id, source, external_id, attempt, run_number, commit_sha, branch, trigger, actor, title, outcome, started_at, completed_at, url, synced_at | unique (source, external_id, attempt); (application_id, started_at) |
+| `deployments` | application_id, source, external_id, attempt, run_number, workflow_name, commit_sha, branch, trigger, actor, title, outcome, queued_at, started_at, completed_at, url, synced_at | unique (source, external_id, attempt); (application_id, started_at) |
 | `log_entries` | application_id, timestamp, received_at, severity (int), event, message, correlation_id, environment, attributes (JSON) | (application_id, timestamp), (timestamp), (correlation_id) |
-| `sessions` | token_hash (HMAC-SHA256 of the session ID, keyed with the operator token), created_at, expires_at | token_hash |
+| `operator_sessions` | token_hash (HMAC-SHA256 of the session ID, keyed with the operator token), created_at, expires_at | token_hash |
 | `system_state` | key, value (JSON), updated_at, used for the worker heartbeat, sync cursors and ETags | key |
 
 Monitoring settings live on `applications`, not in a separate `MonitoringConfiguration` table,
@@ -498,6 +501,6 @@ tick into one transaction.
 | SQLite | PostgreSQL | No server to run, a single file to back up, and enough for this write rate. Revisit only for multiple instances. |
 | Pull from the GitHub API | GitHub webhooks, or workflows posting to CloudOps | Webhooks and pushes need CloudOps reachable from the internet. Pulling works locally and keeps GitHub as the source of truth. |
 | Push log ingestion | Tailing files, or running Loki/ELK | No agent to install and no cluster to run. The cost is that applications must opt in and send their logs. |
-| Hand-written SVG charts | A charting library | Only three chart types are needed. Hand-written SVG gives full control of accessibility (text alternatives, patterns) and adds nothing to the bundle. |
+| Hand-written charts | A charting library | Two are needed: the evidence timeline (one SVG with layers for incidents, deployments, response time, checks and 5xx counts) and the health matrix (HTML and CSS). Writing them gives full control of accessibility (text alternatives, table views, patterns) and adds nothing to the bundle. |
 | Sync SQLAlchemy plus an async probe | Fully async SQLAlchemy | The probes need concurrency; database writes are tiny and run in a worker thread. The approach is already proven in DocuMind. |
 | No deployment trigger | `workflow_dispatch` from the UI | It would add an auth surface and a write-scoped token for little demo value. The ability to diagnose problems matters more here. |
