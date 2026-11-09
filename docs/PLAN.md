@@ -16,7 +16,7 @@ finished phase gets a report in [`PHASE_REPORTS/`](PHASE_REPORTS/).
 | 7 | Integration and operational hardening | Done: system tests of the real server process, Playwright journey in CI, six defects fixed |
 | 8 | Security and quality review | Done: seven findings fixed (REVIEW.md); sessions end on token rotation; SECURITY.md §10 complete |
 | 9 | Deployment and final verification | Done with Option A only, by decision (no budget for a server): the published image pulled and run signed out in every Deploy run; the README followed from a fresh clone |
-| 10 | Portfolio readiness | Not started |
+| 10 | Portfolio readiness | Done: README rewritten, eight screenshots from a real run, every claim checked (11 documentation corrections), final report in PHASE_REPORTS/phase-10.md |
 
 ## 1. Environment (inspected 2026-10-27)
 
